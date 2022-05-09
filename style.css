@@ -1,0 +1,55 @@
+body {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    background-color: #ffffff;
+    line-height: 1.5;
+    color: #323330;
+}
+
+a:link { 
+    color: #0000EE; 
+}
+
+a:visited {
+    color: #551A8B;
+}
+
+a.josmLink:visited {
+    color: #0000EE;
+}
+
+.leftSide {
+  float: left;
+  width: 50%;
+}
+
+textarea {
+    width: 560px;
+    height: 29px;
+}
+
+#slippyMapId { 
+    height: 400px; 
+    width: 500px;
+}
+
+table {
+    clear: both;
+}
+
+tr.rowHead {
+    background-color: #41f1f1;
+}
+
+tr.rowBg0 {
+    background-color: #eeeeee;
+}
+
+tr.rowBg1 {
+    background-color: #ffffff;
+}
+
+td.tdLink {
+    background-color: #ffffff;
+}
+
+
