@@ -544,31 +544,46 @@ function makeFootprintOsmFile(footprintIndex, bin, heightInMeters) {
     return osmFileTop + osmFileBottom;
 }
 
-function sendFootprintToJosm(footprintIndex, bin, heightInMeters) {
-    /* Note that when adding a new way from a remote control command, JOSM will create the nodes needed to add the
-       way, but *only* if needed -- if a node already exists at the specified coordinates, that will be used instead.
-       Two important implications of this:
-        - We don't have to explicitly close the way by referencing the same starting and ending node ID, like we do
-          in the makeFootprintOsmFile function. As long as the footprint shape starts and ends at the same
-          coordinates, JOSM will find the new footprint's first node and reuse it as the last node, so the footprint 
-          will be added as a closed way. (Good thing, because there's no way to specify that via the JOSM remote
-          control protocol.)
-        - The new footprint might automatically attach to existing ways in OSM, if they contain nodes at the same
-          coordinates. This is most likely to happen if the building footprint in question, or a neighboring one, 
-          was already imported and hasn't been geometrically modified since. (Importing a footprint from an .osm 
-          file via the makeFootprintOsmFile function, on the other hand, would always create fresh nodes -- even if 
-          the node coordinates are identical.) */
+async function sendFootprintToJosm(footprintIndex, bin, heightInMeters) {
+    /* Note that when adding a new way using the "add_way" remote control command, JOSM will create the nodes
+	needed to add the way. But unlike when importing XML data, it will *only* create them if needed. If the
+	active JOSM data layer already has a node at the specified coordinates, that will be used instead.
+    Three important implications of this:
+      - We don't have to explicitly close the way by referencing the same starting and ending node ID, like we
+        do when specifying closed ways in OSM XML. As long as the footprint shape starts and ends at the same
+        coordinates, JOSM will find the new way's first node and reuse it as the last node, so the footprint
+		will be added as a closed way. (Good thing, because the "add_way" command doesn't allow us to specify
+		the reuse of a particular node ID.)
+      - The new footprint will connect to existing ways in JOSM if they contain nodes at the same coordinates.
+        This is most likely to happen if the building footprint in question, or an abutting one, was already
+        imported and hasn't been realigned since. Connecting abutting footprints is desired behavior, so we
+		issue a JOSM "load_and_zoom" remote control command before the "add_way" command, to make sure any 
+        neighboring footprints are loaded in the active data layer.
+      - There's also a small chance that the new footprint could connect to non-building nodes, which could
+	    lead to data errors. JOSM's validator might catch these, but of course it's primarily the individual
+		mapper's responsibility to check the data for any problems before uploading. 
+		*/
     let nodes = footprintJson[footprintIndex].the_geom.coordinates[0][0];
-    let url = 'http://localhost:8111/add_way?way=' + nodes[0][1] + ',' + nodes[0][0];
+	let highLat = nodes[0][1];
+	let lowLat = nodes[0][1];
+	let highLon = nodes[0][0];
+	let lowLon = nodes[0][0];
+    let addWayUrl = 'http://localhost:8111/add_way?way=' + nodes[0][1] + ',' + nodes[0][0];
     for (let i = 1; i < nodes.length; i++) {
-        url += ';' +  nodes[i][1] + ',' + nodes[i][0];
+        addWayUrl += ';' + nodes[i][1] + ',' + nodes[i][0];
+		highLat = Math.max(highLat,nodes[i][1]);
+		lowLat = Math.min(lowLat,nodes[i][1]);
+		highLon = Math.max(highLon,nodes[i][0]);
+		lowLon = Math.min(lowLon,nodes[i][0]);		
     }
-
-    url += '&addtags=building=yes%7Cnycdoitt:bin=' + bin;
+    addWayUrl += '&addtags=building=yes%7Cnycdoitt:bin=' + bin;
     if (heightInMeters !== '') {
-        url+= '%7Cheight=' + heightInMeters;
+        addWayUrl+= '%7Cheight=' + heightInMeters;
     }
-    fetch(url);
+	let loadAndZoomUrl = 'http://localhost:8111/load_and_zoom?left=' + (lowLon - 0.0005) + '&right=' + (highLon+ 0.0005) + '&top=' + (highLat + 0.0004) + '&bottom=' + (lowLat - 0.0004);
+    //this load_and_zoom bbox is not international-date-line-safe... which is ok for NYC	
+	await fetch(loadAndZoomUrl);
+    fetch(addWayUrl);
 }
 
 
