@@ -238,7 +238,7 @@ async function doFootprintSearch(bin) {
                 }
 
                 if (!footprintDrawn) {
-                    slippyMapFootprint(footprintJson[i].the_geom);
+                    slippyMapAddFootprint(footprintJson[i].the_geom);
                     footprintDrawn = true;
                 }
 
@@ -589,49 +589,110 @@ async function sendFootprintToJosm(footprintIndex, bin, heightInMeters) {
 
 /* SLIPPY MAP FUNCTIONS */
 
-function slippyMapDefault() {
-    const defaultMapCenter = [40.73, -73.97];
-    const defaultMapZoom = 10;
+function slippyMapInit() {
     let haveTileLayer = false;
     if (slippyMap === null) {
-        slippyMap = L.map('slippyMapId');
+        slippyMap = L.map('slippyMapId', 
+						  {contextmenu: true,
+						   contextmenuItems: [{
+							 text: 'View at OSM',
+							 callback: menuOsmView
+						   }, {
+						     text: 'Feature query at OSM',
+							 callback: menuOsmFeatureQuery
+						   }, {
+							 text: 'Reverse geocode at OSM',
+							 callback: menuOsmReverse
+						   }, {
+							 text: 'Reverse geocode at Nominatim',
+							 callback: menuNominatimReverse
+						   }, {
+							 text: 'Edit at OSM (iD)',
+							 callback: menuOsmEdit
+						   }, {
+							 text: 'Edit in JOSM',
+							 callback: menuJosmEdit
+						   }, '-', {
+							 text: 'NYC Cyclomedia imagery',
+							 callback: menuNycCyclomedia
+						   }, {
+							 text: 'Bing Streetside imagery',
+							 callback: menuBingStreetside
+						   }]
+						  });
     } else {
-        haveTileLayer = removeAllButTileLayer();
-    }
+		slippyMap.eachLayer(function (thisLayer) {
+								//We want to keep the tile layer and delete everything else. There's probably
+								//a better way, but checking for null attribution property works.
+								if (thisLayer.getAttribution() === null) {
+									slippyMap.removeLayer(thisLayer);
+								} else {
+									haveTileLayer = true;
+								}
+							});
+   }
+   return haveTileLayer;
+}
+
+function slippyMapDefault() {
+    let haveTileLayer = slippyMapInit();
+    const defaultMapCenter = [40.73, -73.97];
+    const defaultMapZoom = 10;	
     slippyMap.setView(defaultMapCenter, defaultMapZoom);
     if (!haveTileLayer) {
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'}).addTo(slippyMap);
+		slippyMapAddTileLayer();
     }
 }
 
-function slippyMapFootprint(footprintGeom) {
-    let haveTileLayer = false;
-    if (slippyMap === null) {
-        slippyMap = L.map('slippyMapId');
-    } else {
-        haveTileLayer = removeAllButTileLayer();
-    }
+function slippyMapAddFootprint(footprintGeom) {
+    let haveTileLayer = slippyMapInit();
     const footprintGeoJson = L.geoJSON({'type': 'Feature', 'geometry': footprintGeom});
     slippyMap.fitBounds(footprintGeoJson.getBounds());
     if (!haveTileLayer) {
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'}).addTo(slippyMap);
+        slippyMapAddTileLayer();
     }
     footprintGeoJson.addTo(slippyMap);
 }
 
-function removeAllButTileLayer() {
-    let foundTileLayer = false;
-    slippyMap.eachLayer(function (thisLayer) {
-                            //I want to keep the tile layer and delete everything else. There's probably a better
-                            //way, but checking for null attribution property works.
-                            if (thisLayer.getAttribution() === null) {
-                                slippyMap.removeLayer(thisLayer);
-                            } else {
-                                foundTileLayer = true;
-                            }
-                        });
-    return foundTileLayer;
+function slippyMapAddTileLayer() {
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'}).addTo(slippyMap);
 }
+
+
+/* SLIPPY MAP CONTEXT MENU CALLBACK FUNCTIONS */
+
+function menuOsmView(e) {
+	window.open('https://www.openstreetmap.org/#map=19/' + e.latlng.lat + '/' + e.latlng.lng, '_blank');
+}
+
+function menuOsmEdit(e) {
+	window.open('https://www.openstreetmap.org/edit#map=19/' + e.latlng.lat + '/' + e.latlng.lng, '_blank');
+}
+
+function menuJosmEdit(e) {
+	fetch('http://localhost:8111/load_and_zoom?left=' + (e.latlng.lng - 0.0012) + '&right=' + (e.latlng.lng + 0.0012) + '&bottom=' + (e.latlng.lat - 0.0006) + '&top=' + (e.latlng.lat + 0.0006));
+}
+
+function menuNycCyclomedia(e) {
+	window.open('https://www.geocoder.nyc/streetview.html?lnglat=' + e.latlng.lng + ',' + e.latlng.lat, '_blank');
+}
+
+function menuBingStreetside(e) {
+	window.open('https://www.bing.com/maps?style=x&cp=' + e.latlng.lat + '~' + e.latlng.lng, '_blank');	
+}
+
+function menuOsmFeatureQuery(e) {
+	window.open('https://www.openstreetmap.org/query?lat=' + e.latlng.lat + '&lon=' + e.latlng.lng + '#map=19/' + e.latlng.lat + '/' + e.latlng.lng, '_blank');
+}
+
+function menuOsmReverse(e) {
+	window.open('https://www.openstreetmap.org/search?whereami=1&query=' + e.latlng.lat + '%2C' + e.latlng.lng + '#map=19/' + e.latlng.lat + '/' + e.latlng.lng, '_blank');	
+}
+
+function menuNominatimReverse(e) {
+	window.open('https://nominatim.openstreetmap.org/ui/reverse.html?lat=' + e.latlng.lat + '&lon=' + e.latlng.lng, '_blank');	
+}
+
 
 
 /* MISC FUNCTIONS */
