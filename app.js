@@ -596,44 +596,44 @@ async function sendFootprintToJosm(footprintIndex, bin, heightInMeters) {
 function slippyMapInit() {
     let haveTileLayer = false;
     if (slippyMap === null) {
-        slippyMap = L.map('slippyMapId', 
-						  {contextmenu: true,
-						   contextmenuItems: [{
-							 text: 'View at OSM',
-							 callback: menuOsmView
-						   }, {
-						     text: 'Feature query at OSM',
-							 callback: menuOsmFeatureQuery
-						   }, {
-							 text: 'Reverse geocode at OSM',
-							 callback: menuOsmReverse
-						   }, {
-							 text: 'Reverse geocode at Nominatim',
-							 callback: menuNominatimReverse
-						   }, {
-							 text: 'Edit at OSM (iD)',
-							 callback: menuOsmEdit
-						   }, {
-							 text: 'Edit in JOSM',
-							 callback: menuJosmEdit
-						   }, '-', {
-							 text: 'NYC Cyclomedia imagery',
-							 callback: menuNycCyclomedia
-						   }, {
-							 text: 'Bing Streetside imagery',
-							 callback: menuBingStreetside
-						   }]
-						  });
+        slippyMap = L.map('slippyMapId',
+                          {contextmenu: true,
+                           contextmenuItems: [{
+                             text: 'View at OSM',
+                             callback: menuOsmView
+                           }, {
+                             text: 'Feature query at OSM',
+                             callback: menuOsmFeatureQuery
+                           }, {
+                             text: 'Reverse geocode at OSM',
+                             callback: menuOsmReverse
+                           }, {
+                             text: 'Reverse geocode at Nominatim',
+                             callback: menuNominatimReverse
+                           }, {
+                             text: 'Edit at OSM (iD)',
+                             callback: menuOsmEdit
+                           }, {
+                             text: 'Edit in JOSM',
+                             callback: menuJosmEdit
+                           }, '-', {
+                             text: 'Cyclomedia imagery',
+                             callback: menuCyclomedia
+                           }, {
+                             text: 'Bing Streetside imagery',
+                             callback: menuBingStreetside
+                           }]
+                          });
     } else {
-		slippyMap.eachLayer(function (thisLayer) {
-								//We want to keep the tile layer and delete everything else. There's probably
-								//a better way, but checking for null attribution property works.
-								if (thisLayer.getAttribution() === null) {
-									slippyMap.removeLayer(thisLayer);
-								} else {
-									haveTileLayer = true;
-								}
-							});
+        slippyMap.eachLayer(function (thisLayer) {
+                                //We want to keep the tile layer and delete everything else. There's probably
+                                //a better way, but checking for null attribution property works.
+                                if (thisLayer.getAttribution() === null) {
+                                    slippyMap.removeLayer(thisLayer);
+                                } else {
+                                    haveTileLayer = true;
+                                }
+                            });
    }
    return haveTileLayer;
 }
@@ -641,10 +641,10 @@ function slippyMapInit() {
 function slippyMapDefault() {
     let haveTileLayer = slippyMapInit();
     const defaultMapCenter = [40.73, -73.97];
-    const defaultMapZoom = 10;	
+    const defaultMapZoom = 10;
     slippyMap.setView(defaultMapCenter, defaultMapZoom);
     if (!haveTileLayer) {
-		slippyMapAddTileLayer();
+        slippyMapAddTileLayer();
     }
 }
 
@@ -666,35 +666,35 @@ function slippyMapAddTileLayer() {
 /* SLIPPY MAP CONTEXT MENU CALLBACK FUNCTIONS */
 
 function menuOsmView(e) {
-	window.open('https://www.openstreetmap.org/#map=19/' + e.latlng.lat + '/' + e.latlng.lng, '_blank');
+    window.open('https://www.openstreetmap.org/#map=19/' + e.latlng.lat + '/' + e.latlng.lng, '_blank');
 }
 
 function menuOsmEdit(e) {
-	window.open('https://www.openstreetmap.org/edit#map=19/' + e.latlng.lat + '/' + e.latlng.lng, '_blank');
+    window.open('https://www.openstreetmap.org/edit#map=19/' + e.latlng.lat + '/' + e.latlng.lng, '_blank');
 }
 
 function menuJosmEdit(e) {
-	fetch('http://localhost:8111/load_and_zoom?left=' + (e.latlng.lng - 0.0012) + '&right=' + (e.latlng.lng + 0.0012) + '&bottom=' + (e.latlng.lat - 0.0006) + '&top=' + (e.latlng.lat + 0.0006));
+    fetch('http://localhost:8111/load_and_zoom?left=' + (e.latlng.lng - 0.0012) + '&right=' + (e.latlng.lng + 0.0012) + '&bottom=' + (e.latlng.lat - 0.0006) + '&top=' + (e.latlng.lat + 0.0006));
 }
 
-function menuNycCyclomedia(e) {
-	window.open('https://www.geocoder.nyc/streetview.html?lnglat=' + e.latlng.lng + ',' + e.latlng.lat, '_blank');
+function menuCyclomedia(e) {
+    window.open('https://www.geocoder.nyc/streetview.html?lnglat=' + e.latlng.lng + ',' + e.latlng.lat, '_blank');
 }
 
 function menuBingStreetside(e) {
-	window.open('https://www.bing.com/maps?style=x&cp=' + e.latlng.lat + '~' + e.latlng.lng, '_blank');	
+    window.open('https://www.bing.com/maps?style=x&cp=' + e.latlng.lat + '~' + e.latlng.lng, '_blank');
 }
 
 function menuOsmFeatureQuery(e) {
-	window.open('https://www.openstreetmap.org/query?lat=' + e.latlng.lat + '&lon=' + e.latlng.lng + '#map=19/' + e.latlng.lat + '/' + e.latlng.lng, '_blank');
+    window.open('https://www.openstreetmap.org/query?lat=' + e.latlng.lat + '&lon=' + e.latlng.lng + '#map=19/' + e.latlng.lat + '/' + e.latlng.lng, '_blank');
 }
 
 function menuOsmReverse(e) {
-	window.open('https://www.openstreetmap.org/search?whereami=1&query=' + e.latlng.lat + '%2C' + e.latlng.lng + '#map=19/' + e.latlng.lat + '/' + e.latlng.lng, '_blank');	
+    window.open('https://www.openstreetmap.org/search?whereami=1&query=' + e.latlng.lat + '%2C' + e.latlng.lng + '#map=19/' + e.latlng.lat + '/' + e.latlng.lng, '_blank');
 }
 
 function menuNominatimReverse(e) {
-	window.open('https://nominatim.openstreetmap.org/ui/reverse.html?lat=' + e.latlng.lat + '&lon=' + e.latlng.lng, '_blank');	
+    window.open('https://nominatim.openstreetmap.org/ui/reverse.html?lat=' + e.latlng.lat + '&lon=' + e.latlng.lng, '_blank');
 }
 
 
