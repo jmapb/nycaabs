@@ -22,7 +22,9 @@ const infoTable = document.getElementById('infoTableId');
 const bblRegex = /^([1-5])([0-9]{5})([0-9]{4})$/;
 const boros = ['Manhattan', 'Bronx', 'Brooklyn', 'Queens', 'Staten Island'];
 var slippyMap = null;
+var markerLatLon = null;
 var footprintJson = [];
+var footprintDrawn = false;
 
 const params = (new URL(document.location)).searchParams;
 const paramSearch = params.get('search');
@@ -48,7 +50,9 @@ async function doSearch() {
     searchInput.value = searchText;
     clearIoElements();
     clearSearchLog();
+    markerLatLon = null;
     footprintJson = [];
+    footprintDrawn = false;
 
     if (validBin(searchText)) {
         writeSearchLog('Search text "' + searchText + '" looks like a BIN\r\nAttempting BIN search...\r\n');
@@ -63,9 +67,14 @@ async function doSearch() {
         writeFailedAddress();
     }
 
-    if (slippyMap === null) {
-        /* If app was called with a url search param, map won't have been created on page load. It might have been subsequently created if search results returned a valid footprint or latlon, but if not, create it now in default state. */
-        slippyMapDefault();
+    if (!footprintDrawn) {
+        /* No footprint was drawn... If we got latlon from one from the API calls, add a marker and zoom
+        there, otherwise reset map to default state. */
+        if (markerLatLon === null) {
+            slippyMapDefault();
+        } else {
+            slippyMapAddMarker(markerLatLon);
+        }
     }
 }
 
@@ -186,6 +195,10 @@ async function doAddressSearch(searchText) {
                 writeSearchLog(' - showing invalid BIN ' + bin + ', deeper search impossible without a valid BIN\r\n');
                 writeInvalidBin(bin);
             }
+
+            if ((Array.isArray(json.features[useResult].geometry.coordinates)) && (json.features[useResult].geometry.coordinates[0] < -73) && (json.features[useResult].geometry.coordinates[0] > 40)) {
+                markerLatLon = [json.features[useResult].geometry.coordinates[1], json.features[useResult].geometry.coordinates[0]];
+            }
         }
     } else {
         writeSearchLog(' - error ' + response.status + ' "' + response.statusText + '"');
@@ -199,7 +212,7 @@ async function doBinSearch(bin) {
 }
 
 async function doFootprintSearch(bin) {
-	
+
     function footprintFeatureText(featureCode) {
         //Codes taken from https://github.com/CityOfNewYork/nyc-geo-metadata/blob/master/Metadata/Metadata_BuildingFootprints.md and https://github.com/CityOfNewYork/nyc-planimetrics/blob/master/Capture_Rules.md#building-footprint
         const featureCodes = {
@@ -220,7 +233,6 @@ async function doFootprintSearch(bin) {
         return feature;
     }
 
-    let footprintDrawn = false;
     let row = infoTable.insertRow(-1);
     row.className = 'rowHead';
     row.innerHTML = '<td>Footprint</td><td>Yr Built</td><td>Status</td><td>Date</td><td>Height</td>';
@@ -301,10 +313,6 @@ async function doFootprintSearch(bin) {
     } else {
         writeSearchLog(' - error ' + response.status + ' "' + response.statusText + '"');
     }
-    /* If we didn't map a building footprint, reset to the default NYC map. At some point we might want to zoom to a relevant latlon instead, taken from the address or job searches, even if we don't have a footprint. */
-    if (!footprintDrawn) {
-        slippyMapDefault();
-    }
 }
 
 async function doDobJobSearch(bin) {
@@ -342,7 +350,7 @@ async function doDobJobSearch(bin) {
     let row = infoTable.insertRow(-1);
     row.className = 'rowHead';
     row.innerHTML = '<td>DOB Job</td><td>Type</td><td>Status</td><td>Date</td><td>Height</td><td class="tdLink"><a href="' + constructUrlBisJobs(bin) + '">Job&nbsp;List&nbsp;@&nbsp;BIS</a> <a href="' + constructUrlBisJobs(bin, 'A') + '">Active&nbsp;Zoning&nbsp;Job&nbsp;@&nbsp;BIS</a></td>';
-    let dobJobApiQuery = 'https://data.cityofnewyork.us/resource/ic3t-wcy2.json?$select=distinct%20job__,house__,street_name,borough,block,lot,job_type,job_status,latest_action_date,job_s1_no,proposed_height&$where=proposed_height%3E0%20AND%20bin__=%27' + bin + '%27&$order=latest_action_date'; //may eventually want to request latlon in this query, in case we don't have it from elsewhere
+    let dobJobApiQuery = 'https://data.cityofnewyork.us/resource/ic3t-wcy2.json?$select=distinct%20job__,house__,street_name,borough,block,lot,job_type,job_status,latest_action_date,job_s1_no,proposed_height,gis_latitude,gis_longitude&$where=bin__=%27' + bin + '%27';
     writeSearchLog('\r\n"DOB Job Application Filings" API query ' + dobJobApiQuery + '\r\n');
     let response = await fetch(dobJobApiQuery);
     if (response.ok) {
@@ -387,6 +395,13 @@ async function doDobJobSearch(bin) {
                     }
                 }
 
+                if (markerLatLon === null) {
+                    if ((json[i].gis_latitude > 40) && (json[i].gis_longitude < -73)) {
+                        markerLatLon = [json[i].gis_latitude, json[i].gis_longitude];
+                        writeSearchLog(' - got latlon ' + json[i].gis_latitude + ', ' +  json[i].gis_longitude + ' from result ' + i + '\r\n');
+                    }
+                }
+
                 row = infoTable.insertRow(-1);
                 row.className = 'rowBg' + (i % 2);
                 row.innerHTML = '<td>' + json[i].job__ + '</td><td>' + json[i].job_type + '</td><td>' + json[i].job_status + '</td><td>' + formatDate(json[i].latest_action_date) + '</td><td>' + formatHeight(json[i].proposed_height) + '</td><td class="tdLink"><a href="https://a810-bisweb.nyc.gov/bisweb/JobsQueryByNumberServlet?passjobnumber=' + json[i].job__ + '&passdocnumber=01">Job&nbsp;Details&nbsp;@&nbsp;BIS</a> <a href="https://a810-bisweb.nyc.gov/bisweb/JobsZoningDocumentsServlet?&allisn=' + json[i].job_s1_no + '&passjobnumber=' + json[i].job__ + '&passdocnumber=01&allbin=' + bin + '">Zoning&nbsp;Documents&nbsp;@&nbsp;BIS</a></td>';
@@ -416,7 +431,7 @@ async function doDobNowSearch(bin) {
     let row = infoTable.insertRow(-1);
     row.className = 'rowHead';
     row.innerHTML = '<td>DOB NOW Job</td><td>Type</td><td>Status</td><td>Date</td><td>Height</td>';
-    let dobNowJobApiQuery = 'https://data.cityofnewyork.us/resource/w9ak-ipjd.json?$select=distinct%20job_filing_number,house_no,street_name,borough,block,lot,job_type,filing_status,current_status_date,proposed_height&$where=bin=%27' + bin + '%27&$order=current_status_date'; //may eventually want to request latlon in this query, in case we don't have it from elsewhere
+    let dobNowJobApiQuery = 'https://data.cityofnewyork.us/resource/w9ak-ipjd.json?$select=distinct%20job_filing_number,house_no,street_name,borough,block,lot,job_type,filing_status,current_status_date,proposed_height,latitude,longitude&$where=bin=%27' + bin + '%27&$order=current_status_date'; //may eventually want to request latlon in this query, in case we don't have it from elsewhere
     writeSearchLog('\r\n"DOB NOW: Build – Job Application Filings" API query ' + dobNowJobApiQuery + '\r\n');
     let response = await fetch(dobNowJobApiQuery);
     if (response.ok) {
@@ -459,6 +474,13 @@ async function doDobNowSearch(bin) {
                         writeBbl(boroCode, jobBlock, jobLot);
                         writeSearchLog(' - showing BBL ' + boroCode + jobBlock + jobLot + ' from result ' + (j-i) + '\r\n');
                         needBbl = false;
+                    }
+                }
+
+                if (markerLatLon === null) {
+                    if ((json[j-i].latitude > 40) && (json[j-i].longitude < -73)) {
+                        markerLatLon = [json[j-i].latitude, json[j-i].longitude];
+                        writeSearchLog(' - got latlon ' + json[j-i].latitude + ', ' +  json[j-i].longitude + ' from result ' + i + '\r\n');
                     }
                 }
 
@@ -712,6 +734,15 @@ function slippyMapAddFootprint(footprintGeom) {
         slippyMapAddTileLayer();
     }
     footprintGeoJson.addTo(slippyMap);
+}
+
+function slippyMapAddMarker(latlon) {
+    let haveTileLayer = slippyMapInit();
+    slippyMap.fitBounds([latlon]);
+    if (!haveTileLayer) {
+        slippyMapAddTileLayer();
+    }
+    L.marker(latlon).addTo(slippyMap);
 }
 
 function slippyMapAddTileLayer() {
