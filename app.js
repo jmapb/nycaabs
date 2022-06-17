@@ -4,6 +4,7 @@
  - Generate .osm files for multipolygon footprints (function makeFootprintOsmFile)
  - Filter garages from NYC GeoSearch results (eg "7517 colonial road brooklyn")
  - If latlon was found but no footprint, add a map marker and zoom there
+ - Favor NYC GeoSearch results with street match (eg "435 union")
  - Add right-click map menu for links to OSM/iD/JOSM/Cyclomedia/Bing Streetside, maybe also some of the other
    options found on GOAT's map
  - Add noscript message
@@ -198,6 +199,27 @@ async function doBinSearch(bin) {
 }
 
 async function doFootprintSearch(bin) {
+	
+    function footprintFeatureText(featureCode) {
+        //Codes taken from https://github.com/CityOfNewYork/nyc-geo-metadata/blob/master/Metadata/Metadata_BuildingFootprints.md and https://github.com/CityOfNewYork/nyc-planimetrics/blob/master/Capture_Rules.md#building-footprint
+        const featureCodes = {
+            2100: 'Building',
+            5100: 'Construction',
+            2110: 'Garage',
+            1001: 'Fuel Canopy',
+            1002: 'Tank',
+            1003: 'Placeholder',
+            1004: 'Auxiliary',
+            1005: 'Temporary',
+            5110: 'Garage'
+        };
+        const feature = featureCodes[featureCode];
+        if (typeof(feature) === 'undefined') {
+            return featureCode;
+        }
+        return feature;
+    }
+
     let footprintDrawn = false;
     let row = infoTable.insertRow(-1);
     row.className = 'rowHead';
@@ -286,6 +308,36 @@ async function doFootprintSearch(bin) {
 }
 
 async function doDobJobSearch(bin) {
+
+    function dobJobSortRank(type, date) {
+        /* Ideally I want the top sort entry to be the same job you'd get if you searched this BIN in
+        BIS -- because that's the job that usually links to the zoning documents. My working theory is
+        that BIS will return the newest NB (new building) job, and if no NB job is on record, then the
+        newest A1, then A2, then A3 (various levels of building alterations) and after that who knows.
+        So that's what this sort rank does. I have my doubts that this approach will work every time,
+        but I haven't found any counterexamples yet. (Please report if found!)
+
+        The full list of DOB job types (taken from BIS's JobsQueryByLocationServlet page) is:
+          A1 - ALTERATION TYPE 1
+          A2 - ALTERATION TYPE 2
+          A3 - ALTERATION TYPE 3
+          DM - FULL DEMOLITION
+          NB - NEW BUILDING
+          PA - PLACE OF ASSEMBLY
+          PR - LAA (ARA)
+          SC - SUBDIVISION - CONDO
+          SG - SIGN
+          SI - SUBDIVISION - IMPROVED
+          SU - SUBDIVISION - UNIMPROVED
+        */
+        const jobTypes = ['A3', 'A2', 'A1', 'NB'];
+        return parseInt(String(jobTypes.indexOf(type) + 1) + date.slice(-4) + date.slice(0,2) + date.slice(3,5));
+    }
+
+    function formatDate(mmxddxyyyy) {
+        return mmxddxyyyy.slice(-4) + '-' + mmxddxyyyy.slice(0,2) + '-' + mmxddxyyyy.slice(3,5);
+    }
+
     const maxResults = 15;
     let row = infoTable.insertRow(-1);
     row.className = 'rowHead';
@@ -312,12 +364,7 @@ async function doDobJobSearch(bin) {
             } else {
                 writeSearchLog(' - ' + j + ' DOB Job Application results for this BIN\r\n');
             }
-            /* My goal with this sort is to return the "correct" DOB job -- the one you'd be shown if you searched the
-            property on BIS -- as the first entry in this portion of the table. My current approach is to assume BIS
-            will show the newest NB (new building) job, and if no NB job is on record, then the newest A1, then A2,
-            then A3 (building alternations) and after that who knows. So that's what the following sort does. I have
-            my doubts that it actually accomplishes my goal reliably, but I haven't found any counterexamples yet. */
-            json.sort(function(a, b) { return dobJobSort(b.job_type, b.latest_action_date) - dobJobSort(a.job_type, a.latest_action_date); });
+            json.sort(function(a, b) { return dobJobSortRank(b.job_type, b.latest_action_date) - dobJobSortRank(a.job_type, a.latest_action_date); });
             for (let i = 0; i < j; i++) {
 
                 if (needAddress) {
@@ -357,6 +404,15 @@ async function doDobJobSearch(bin) {
 }
 
 async function doDobNowSearch(bin) {
+
+    function shortenDobNowStatus(dobNowStatus) {
+        let j = dobNowStatus.indexOf(' -');
+        if (j > 2) {
+            return dobNowStatus.slice(0,j);
+        }
+        return dobNowStatus.replace('Certificate of Operation', 'Cert');
+    }
+
     let row = infoTable.insertRow(-1);
     row.className = 'rowHead';
     row.innerHTML = '<td>DOB NOW Job</td><td>Type</td><td>Status</td><td>Date</td><td>Height</td>';
@@ -709,20 +765,21 @@ function validBin(bin) {
 
 function guessBoroNum(searchBoro) {
     const boroGuesses = { m: 1,
-                          s: 5,
                           q: 4,
-                          ne: 1,
+                          s: 5,
                           bk: 3,
                           bl: 3,
                           bx: 2,
+                          ne: 1,
                           brk: 3,
                           brx: 2,
                           the: 2,
                           broo: 3,
                           bron: 2
                         };
+    searchBoro = searchBoro.toLowerCase();
     for (const k in boroGuesses) {
-        if (caseInsensitiveStartsWith(searchBoro, k)) {
+        if (searchBoro.slice(0, k.length) === k) {
             return boroGuesses[k];
         }
     }
@@ -756,46 +813,4 @@ function formatHeight(feet, meters) {
         meters = feetToMeters(feet);
     }
     return feet + 'ft (' +  meters + 'm)';
-}
-
-function footprintFeatureText(featureCode) {
-    //Codes taken from https://github.com/CityOfNewYork/nyc-geo-metadata/blob/master/Metadata/Metadata_BuildingFootprints.md and https://github.com/CityOfNewYork/nyc-planimetrics/blob/master/Capture_Rules.md#building-footprint
-    const featureCodes = {
-        2100: 'Building',
-        5100: 'Construction',
-        2110: 'Garage',
-        1001: 'Fuel Canopy',
-        1002: 'Tank',
-        1003: 'Placeholder',
-        1004: 'Auxiliary',
-        1005: 'Temporary',
-        5110: 'Garage'
-    };
-    const feature = featureCodes[featureCode];
-    if (typeof(feature) === 'undefined') {
-        return featureCode;
-    }
-    return feature;
-}
-
-function dobJobSort(type, date) {
-    const jobTypes = ['A3', 'A2', 'A1', 'NB'];
-    return parseInt(String(jobTypes.indexOf(type) + 1) + date.slice(-4) + date.slice(0,2) + date.slice(3,5));
-}
-
-function formatDate(mmxddxyyyy) {
-    return mmxddxyyyy.slice(-4) + '-' + mmxddxyyyy.slice(0,2) + '-' + mmxddxyyyy.slice(3,5);
-}
-
-function shortenDobNowStatus(dobNowStatus) {
-    let j = dobNowStatus.indexOf(' -');
-    if (j > 2) {
-        return dobNowStatus.slice(0,j);
-    }
-    return dobNowStatus.replace('Certificate of Operation', 'Cert');
-}
-
-function caseInsensitiveStartsWith(string, start) {
-    const regex = new RegExp('^' + start, 'i');
-    return regex.test(string);
 }
