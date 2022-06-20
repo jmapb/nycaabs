@@ -3,10 +3,7 @@
  - About/documentation popup (including citation advice, warning about https redirection for GOAT)
  - Generate .osm files for multipolygon footprints (function makeFootprintOsmFile)
  - Filter garages from NYC GeoSearch results (eg "7517 colonial road brooklyn")
- - If latlon was found but no footprint, add a map marker and zoom there
  - Favor NYC GeoSearch results with street match (eg "435 union")
- - Add right-click map menu for links to OSM/iD/JOSM/Cyclomedia/Bing Streetside, maybe also some of the other
-   options found on GOAT's map
  - Add noscript message
  - Populate addressRangeList (not sure if this is worth doing without the full address range data from GOAT.)
 
@@ -87,7 +84,7 @@ async function doAddressSearch(searchText) {
 
         /* One great thing about NYC GeoSearch is that it can find addresses from freeform search text that need not include a borough. But a surprising defect is that even when the search text does explicitly include a borough, and the address parser at NYC Geosearch successfully identifies the borough, otherwise-identical search results in the wrong borough will sometimes be prioritized over results in the requested one. (Eg https://geosearch.planninglabs.nyc/v1/search?text=87%203rd%20Ave%20Brooklyn returns BIN 1006851 in Manhattan before BIN 3329450 in Brooklyn despite the parser correctly identifying {borough: "brooklyn"}.)
 
-        To alleviate this we'll examine the parser's output as reported in json.geocoding.query.parsed_text, and if we find a borough (or a likely borough abbreviation, sometimes identified by the parser as a region, city, or state) then we'll loop through the results in order to prefer a BIN from the correct borough if possible.
+        To alleviate this we'll examine the parser's output as reported in json.geocoding.query.parsed_text, and if we find a borough (or a likely borough abbreviation, sometimes misidentified by the parser as a region, city, or state) then we'll loop through the results in order to prefer a BIN from the correct borough if possible.
 
         To help debug this process we'll examine and log the exact findings of the NYC Geosearch address parser, and our best guess about the specified borough (if any).
         */
@@ -143,29 +140,29 @@ async function doAddressSearch(searchText) {
             /* We also have json.features[useResult].properties.borough but we don't really need it since we're setting the boro based on the first digit of the bin. If someday we want to show zip codes, we can use json.features[useResult].properties.postalcode */
             let boroCode = bin.slice(0,1);
 
-            /* BIG TODO -- At this point it would be great to take the address components (maybe as returned in the
-            parsed_text structure above, or failing that from the top search result, or failing that parse the text
-            ourselves) and feed them into a "Function1A" query on the NYC Planning Geoservice API
+            /* BIG TODO -- At this point it would be great to take the address components (maybe as returned
+            in the parsed_text structure above, or failing that from the top search result, or failing that
+            parse the text ourselves) and feed them into a "Function1A" query on the NYC Planning Geoservice API
             https://geoservice.planning.nyc.gov/, which has important advantages over the NYC GeoSearch API:
              - First, it returns address ranges for all streets of multi-street buildings. (NYC GeoSearch only
-               returns the the address range on the queried street.)
+               returns the address range on the queried street.)
              - Second, it gives additional address classification info (See "Address Types" at
                http://a030-goat.nyc.gov/goat/Glossary for documentation.)
-             - Third, it can find recently updated addresses and BINs by accessing the Transitional PAD file (TPAD).
-               NYC GeoSearch uses the standard PAD file, which is only updated quarterly.
+             - Third, it can find recently updated addresses and BINs by accessing the Transitional PAD file
+               (TPAD). NYC GeoSearch uses the standard PAD file, which is only updated quarterly.
 
-            If we could get decent results from the NYC Planning Geoservice API, we probably wouldn't even need to
-			further examine the NYC GeoSearch results. (Curse these very similar names!) However, access to NYC
-			Planning Geoservice requires registration and department approval, and will only work with a city-issued
-			private API key. The current plan for this app is to host on github.io, though, so keeping the API key
-			private isn't possible.
+            If we could get decent results from the NYC Planning Geoservice API, we probably wouldn't even
+            need to further examine the NYC GeoSearch results. (Curse these very similar names!) However,
+            access to NYC Planning Geoservice requires registration and department approval, and will only
+            work with a city-issued private API key. The current plan for this app is to host on github.io,
+            though, so keeping the API key private isn't possible.
 
             There's a web app wrapper around the NYC Planning Geoservice API called "GOAT",
-            http://a030-goat.nyc.gov/goat/. The GOAT app supports URL query parameters and is free to use without
-            credentials, but its cross-site scripting policy prevents us from screen-scraping the results from our
-            own web app. In theory we could attempt to work around this with a CORS proxy but that's messy. (GOAT
-            is also available as a downloadable offline desktop app, but that version only uses the standard PAD
-            file, not the TPAD file.)
+            http://a030-goat.nyc.gov/goat/. The GOAT app supports URL query parameters and is free to use
+            without credentials, but its cross-site scripting policy prevents us from screen-scraping the
+            results from our own web app. In theory we could attempt to work around this with a CORS proxy but
+            that's messy. (GOAT is also available as a downloadable offline desktop app, but that version only
+            uses the standard PAD file, not the TPAD file.)
 
             For now, we'll simply rely on the results from the NYC GeoSearch with the following known problems:
              - Slightly out-of-date data (PAD only, not TPAD) that will not reflect newer developments and may
@@ -252,11 +249,12 @@ async function doFootprintSearch(bin) {
             } else {
                 writeSearchLog(' - ' + footprintJson.length + ' footprint results for this BIN\r\n');
             }
-            /* Loop through footprint results, adding footprints to slippy map and crafting download links.
-            Theoretically we might want to reverse sort by status date, but I haven't bothered since I've never
-            actually seen more than one result for a valid BIN. If we did ever have multiple footprints, they would
-            all be added to the map, but the last one would be centered and zoomed. And the BBL shown would likely
-            be from the first footprint (if it hadn't already been found by an address search.) */
+            /* Loop through footprint results, adding footprints to slippy map and crafting download
+            links. Theoretically we might want to reverse sort by status date, but I haven't bothered
+            since I've never actually seen more than one result for a valid BIN. If we did ever have
+            multiple footprints, only the first one would be added to the map, and the BBL shown would
+            likely be from the first one as well (if it hadn't already been found by an address
+            search.) */
             for (let i = 0; i < footprintJson.length; i++) {
                 //Take the BBL from this footprint record, if it's valid and needed
                 if (needBbl) {
@@ -288,17 +286,23 @@ async function doFootprintSearch(bin) {
 
                 if (footprintJson[i].the_geom.type == 'MultiPolygon') {
                     footprintLinks = '<a href="data:text/xml;charset=utf-8,' + encodeURIComponent(makeFootprintOsmFile(i, bin, heightInMeters)) + '" download="bin' + bin + '_footprint.osm">Download as .osm</a>';
-                    /* JOSM's remote control interface can't handle a multipolygon footprint, so only generate the
-                       "Send to JOSM" link if this is a single-shape multipolygon (ie, not a multipolygon at all --
-                       but they're always listed as 'MultiPolgon' in the API).
-                       In theory we might also want to skip the "Send to JOSM" link for extremely complex polygons
-                       with many nodes that would result in a URL too long for the browser to handle. Maybe scan
-                       through the most complex footprints to see if this is a reasonable concern. */
+                    /* JOSM's remote control "add_way" command can't handle a multipolygon footprint,
+                    so only generate the "Send to JOSM" link if this is a single-shape multipolygon
+                    (ie, not a multipolygon at all -- but they're always listed as 'MultiPolgon' in the
+                    API). At some point we might want to try JOSM's "load_data" remote control command,
+                    which would probably enable us to send an XML-encoded multipolygon directly from
+                    the browser. In theory we might also want to skip the "Send to JOSM" link for
+                    extremely complex polygons with many nodes that would result in a URL too long for
+                    the browser to handle. Maybe scan through the most complex footprints to see if
+                    this is a reasonable concern.
+                    */
                     if (footprintJson[i].the_geom.coordinates[0].length === 1) {
                         footprintLinks += ' <a class="josmLink" href="#0" onclick="javascript:sendFootprintToJosm(' + i + ', &apos;' + bin + '&apos;, &apos;' + heightInMeters + '&apos;)">Send to JOSM</a>';
                     } else {
                         footprintLinks += ' [multipolygon]';
                     }
+                    /* Possibly consider a geojson download link as well -- iD users would be able to load
+                       this, though it only works as an imagery layer, not importable data. */
                 } else {
                     footprintLinks = '';
                 }
@@ -405,6 +409,7 @@ async function doDobJobSearch(bin) {
                 row = infoTable.insertRow(-1);
                 row.className = 'rowBg' + (i % 2);
                 row.innerHTML = '<td>' + json[i].job__ + '</td><td>' + json[i].job_type + '</td><td>' + json[i].job_status + '</td><td>' + formatDate(json[i].latest_action_date) + '</td><td>' + formatHeight(json[i].proposed_height) + '</td><td class="tdLink"><a href="https://a810-bisweb.nyc.gov/bisweb/JobsQueryByNumberServlet?passjobnumber=' + json[i].job__ + '&passdocnumber=01">Job&nbsp;Details&nbsp;@&nbsp;BIS</a> <a href="https://a810-bisweb.nyc.gov/bisweb/JobsZoningDocumentsServlet?&allisn=' + json[i].job_s1_no + '&passjobnumber=' + json[i].job__ + '&passdocnumber=01&allbin=' + bin + '">Zoning&nbsp;Documents&nbsp;@&nbsp;BIS</a></td>';
+                //Unclear if we need to send the "passjobnumber" parameter -- experiment
             }
         } else {
             writeSearchLog(' - no DOB Job Application results for this BIN\r\n');
@@ -452,7 +457,7 @@ async function doDobNowSearch(bin) {
             let jobBlock = '';
             let currentStatusDate = '';
 
-            /* I don't have a particular goal with the sort order in the DOB NOW portion of the table, so I'll just show the newest jobs on top. The good news is that this dataset's date field is formatted sanely and sortable server-side, so we don't have to sort here. The bad news is that the API can't do a descending sort, so this loop processes the rows in reverse order. */
+            /* I don't have a particular goal with the sort order in the DOB NOW portion of the table, so I'll just show the newest jobs on top. The date is in a sortable format but the API can't do a descending sort, so this loop processes the rows in reverse order. */
             for (let i=0; i <= j; i++) {
 
                 if (needAddress) {
@@ -570,7 +575,7 @@ function constructUrlBisJobs(bin, filler) {
 }
 
 function constructUrlBisProfileAddress(houseNumber, street, boroCode) {
-	return 'https://a810-bisweb.nyc.gov/bisweb/PropertyProfileOverviewServlet?boro=' + boroCode + '&houseno=' + encodeURIComponent(houseNumber) + '&street=' + encodeURIComponent(street);
+    return 'https://a810-bisweb.nyc.gov/bisweb/PropertyProfileOverviewServlet?boro=' + boroCode + '&houseno=' + encodeURIComponent(houseNumber) + '&street=' + encodeURIComponent(street);
 }
 
 function constructUrlBisProfileBin(bin) {
@@ -590,6 +595,13 @@ function constructUrlOverpassTurbo(bin) {
 }
 
 function makeFootprintOsmFile(footprintIndex, bin, heightInMeters) {
+    /* Currently the resulting XML data will specify the creation of new nodes when creating the footprint,
+    even if OSM already has nodes at the specified coordinates. To avoid duplicate nodes, we might consider
+    doing a "map?bbox" request from the OSM API to find any existing nodes with matching coordinates, and using
+    those existing nodes in the footprint way instead of adding new ones. This would make it easier to connect
+    abutting footprints, which would be good. In rare cases it might also connect a building to a node
+    belonging to a non-building, which might be bad. */
+
     const polygons = footprintJson[footprintIndex].the_geom.coordinates[0]; //only handling a single building shape.... TODO download and scan the full dataset to see if multi-outer-polygon footprints exist
     let osmFileTop = "<?xml version='1.0' encoding='UTF-8'?>\r\n<osm version='0.6' generator='NYCAABS'>\r\n";
     let osmFileBottom = "";
@@ -628,43 +640,43 @@ function makeFootprintOsmFile(footprintIndex, bin, heightInMeters) {
 
 async function sendFootprintToJosm(footprintIndex, bin, heightInMeters) {
     /* Note that when adding a new way using the "add_way" remote control command, JOSM will create the nodes
-	needed to add the way. But unlike when importing XML data, it will *only* create them if needed. If the
-	active JOSM data layer already has a node at the specified coordinates, that will be used instead.
+    needed to add the way. But unlike when importing XML data, it will *only* create them if needed. If the
+    active JOSM data layer already has a node at the specified coordinates, that will be used instead.
     Three important implications of this:
       - We don't have to explicitly close the way by referencing the same starting and ending node ID, like we
         do when specifying closed ways in OSM XML. As long as the footprint shape starts and ends at the same
         coordinates, JOSM will find the new way's first node and reuse it as the last node, so the footprint
-		will be added as a closed way. (Good thing, because the "add_way" command doesn't allow us to specify
-		the reuse of a particular node ID.)
+        will be added as a closed way. (Good thing, because the "add_way" command doesn't allow us to specify
+        the reuse of a particular node ID.)
       - The new footprint will connect to existing ways in JOSM if they contain nodes at the same coordinates.
         This is most likely to happen if the building footprint in question, or an abutting one, was already
         imported and hasn't been realigned since. Connecting abutting footprints is desired behavior, so we
-		issue a JOSM "load_and_zoom" remote control command before the "add_way" command, to make sure any 
+        issue a JOSM "load_and_zoom" remote control command before the "add_way" command, to make sure any
         neighboring footprints are loaded in the active data layer.
       - There's also a small chance that the new footprint could connect to non-building nodes, which could
-	    lead to data errors. JOSM's validator might catch these, but of course it's primarily the individual
-		mapper's responsibility to check the data for any problems before uploading. 
-		*/
+        lead to data errors. JOSM's validator might catch these, but of course it's primarily the individual
+        mapper's responsibility to check the data for any problems before uploading.
+        */
     let nodes = footprintJson[footprintIndex].the_geom.coordinates[0][0];
-	let highLat = nodes[0][1];
-	let lowLat = nodes[0][1];
-	let highLon = nodes[0][0];
-	let lowLon = nodes[0][0];
+    let highLat = nodes[0][1];
+    let lowLat = nodes[0][1];
+    let highLon = nodes[0][0];
+    let lowLon = nodes[0][0];
     let addWayUrl = 'http://localhost:8111/add_way?way=' + nodes[0][1] + ',' + nodes[0][0];
     for (let i = 1; i < nodes.length; i++) {
         addWayUrl += ';' + nodes[i][1] + ',' + nodes[i][0];
-		highLat = Math.max(highLat,nodes[i][1]);
-		lowLat = Math.min(lowLat,nodes[i][1]);
-		highLon = Math.max(highLon,nodes[i][0]);
-		lowLon = Math.min(lowLon,nodes[i][0]);		
+        highLat = Math.max(highLat,nodes[i][1]);
+        lowLat = Math.min(lowLat,nodes[i][1]);
+        highLon = Math.max(highLon,nodes[i][0]);
+        lowLon = Math.min(lowLon,nodes[i][0]);
     }
     addWayUrl += '&addtags=building=yes%7Cnycdoitt:bin=' + bin;
     if (heightInMeters !== '') {
         addWayUrl+= '%7Cheight=' + heightInMeters;
     }
-	let loadAndZoomUrl = 'http://localhost:8111/load_and_zoom?left=' + (lowLon - 0.0005) + '&right=' + (highLon+ 0.0005) + '&top=' + (highLat + 0.0004) + '&bottom=' + (lowLat - 0.0004);
-    //this load_and_zoom bbox is not international-date-line-safe... which is ok for NYC	
-	await fetch(loadAndZoomUrl);
+    let loadAndZoomUrl = 'http://localhost:8111/load_and_zoom?left=' + (lowLon - 0.0005) + '&right=' + (highLon+ 0.0005) + '&top=' + (highLat + 0.0004) + '&bottom=' + (lowLat - 0.0004);
+    //This load_and_zoom bbox is not international-date-line-safe... which is ok for NYC.
+    await fetch(loadAndZoomUrl);
     fetch(addWayUrl);
 }
 
