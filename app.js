@@ -135,8 +135,8 @@ async function doAddressSearch(searchText) {
                 writeSearchLog(' - ' + json.features.length + ' NYC Geosearch results, no boro match, using index 0\r\n');
             }
             let bin = json.features[useResult].properties.pad_bin;
-            let houseNumber = defaultIfUndef(json.features[useResult].properties.housenumber);
-            let street = defaultIfUndef(json.features[useResult].properties.pad_orig_stname);
+            let houseNumber = json.features[useResult].properties.housenumber ?? '';
+            let street = json.features[useResult].properties.pad_orig_stname ?? '';
             /* We also have json.features[useResult].properties.borough but we don't really need it since we're setting the boro based on the first digit of the bin. If someday we want to show zip codes, we can use json.features[useResult].properties.postalcode */
             let boroCode = bin.slice(0,1);
 
@@ -175,7 +175,7 @@ async function doAddressSearch(searchText) {
             writeSearchLog(' - showing address ' + houseNumber + ' ' + street + ', boro ' + boroCode + '\r\n');
             writeAddress(houseNumber, street, boroCode);
 
-            let bbl = defaultIfUndef(json.features[useResult].properties.pad_bbl);
+            let bbl = json.features[useResult].properties.pad_bbl ?? '';
             const reMatch = bbl.match(bblRegex);
             if (reMatch === null) {
                 writeSearchLog(' - not using invalid BBL ' + bbl + '\r\n');
@@ -307,7 +307,7 @@ async function doFootprintSearch(bin) {
                     footprintLinks = '';
                 }
 
-                row.innerHTML = '<td>' + footprintFeatureText(footprintJson[i].feat_code) + '</td><td>' + defaultIfUndef(footprintJson[i].cnstrct_yr, '?') + '</td><td>' + footprintJson[i].lststatype + '</td><td>' + footprintJson[i].lstmoddate.slice(0,10) + '</td><td>' + formattedHeight + '</td><td class="tdLink">' + footprintLinks + '</td>';
+                row.innerHTML = '<td>' + footprintFeatureText(footprintJson[i].feat_code) + '</td><td>' + (footprintJson[i].cnstrct_yr ?? '?') + '</td><td>' + footprintJson[i].lststatype + '</td><td>' + footprintJson[i].lstmoddate.slice(0,10) + '</td><td>' + formattedHeight + '</td><td class="tdLink">' + footprintLinks + '</td>';
             }
         } else {
             writeSearchLog(' - no footprint results for this BIN\r\n');
@@ -380,8 +380,8 @@ async function doDobJobSearch(bin) {
             for (let i = 0; i < j; i++) {
 
                 if (needAddress) {
-                    houseNumber = defaultIfUndef(json[i].house__);
-                    street = defaultIfUndef(json[i].street_name);
+                    houseNumber = json[i].house__ ?? '';
+                    street = json[i].street_name ?? '';
                     if (houseNumber !== '' && street !== '') {
                         writeSearchLog(' - showing address ' + houseNumber + ' ' + street + ', boro ' + boroCode + '\r\n');
                         writeAddress(houseNumber, street, boroCode);
@@ -461,8 +461,8 @@ async function doDobNowSearch(bin) {
             for (let i=0; i <= j; i++) {
 
                 if (needAddress) {
-                    houseNumber = defaultIfUndef(json[j-i].house_no);
-                    street = defaultIfUndef(json[j-i].street_name);
+                    houseNumber = json[j-i].house_no ?? '';
+                    street = json[j-i].street_name ?? '';
                     if (houseNumber !== '' && street !== '') {
                         writeSearchLog(' - showing address ' + houseNumber + ' ' + street + ', boro ' + boroCode + '\r\n');
                         writeAddress(houseNumber, street, boroCode);
@@ -471,8 +471,8 @@ async function doDobNowSearch(bin) {
                 }
 
                 if (needBbl) {
-                    jobBlock = defaultIfUndef(json[j-i].block);
-                    jobLot = defaultIfUndef(json[j-i].lot);
+                    jobBlock = json[j-i].block ?? '';
+                    jobLot = json[j-i].lot ?? '';
                     if (jobBlock !== '' && jobLot !== '') {
                         jobBlock = jobBlock.padStart(5, '0');
                         jobLot = jobLot.padStart(5, '0');
@@ -833,16 +833,6 @@ function binInBoro(bin, boroNum) {
     return (bin !== '') && (bin.slice(0,1) == boroNum);
 }
 
-function defaultIfUndef(x, defaultValue) {
-    if (typeof(x) === 'undefined') {
-        if (typeof(defaultValue) === 'undefined') {
-            return '';
-        }
-        return defaultValue;
-    }
-    return x;
-}
-
 function feetToMeters(feet) {
     let m = String(Math.round(feet * 3.048));
     return m.slice(0,-1) + '.' + m.slice(-1);
@@ -852,8 +842,5 @@ function formatHeight(feet, meters) {
     if (typeof feet === 'undefined') {
         return '?';
     }
-    if (typeof meters === 'undefined') {
-        meters = feetToMeters(feet);
-    }
-    return feet + 'ft (' +  meters + 'm)';
+    return feet + 'ft (' +  (meters ?? feetToMeters(feet)) + 'm)';
 }
