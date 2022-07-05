@@ -2,8 +2,6 @@
 
  - About/documentation popup (including citation advice, warning about https redirection for GOAT)
  - Generate .osm files for multipolygon footprints (function makeFootprintOsmFile)
- - Filter garages from NYC GeoSearch results (eg "7517 colonial road brooklyn")
- - Favor NYC GeoSearch results with street match (eg "435 union")
  - Add noscript message
  - Populate addressRangeList (not sure if this is worth doing without the full address range data from GOAT.)
 
@@ -33,14 +31,14 @@ if (paramSearch === null) {
     doSearch();
 }
 
+
+/* SEARCH FUNCTIONS */
+
 function checkSearchKey(e) {
     if (e.keyCode === 13) {
         doSearch();
     }
 }
-
-
-/* SEARCH FUNCTIONS */
 
 async function doSearch() {
     const searchText = searchInput.value.trim();
@@ -76,19 +74,107 @@ async function doSearch() {
 }
 
 async function doAddressSearch(searchText) {
+    /* For the address search, we'll use the NYC GeoSearch API (https://geosearch.planninglabs.nyc)
+    which takes freeform address search text and returns a list of the most likely matching
+    addresses with their associated BINs and other info.
+
+    It works well even with minimal input, eg "32 middagh" will return only one item -- BIN 3001569,
+    32 MIDDAGH STREET BROOKLYN -- without the need to specify "street" or "brooklyn" in the search.
+    In this case the query is unambiguous, as there's only one road named Middagh in NYC, and
+    there's only one building on that road with housenumber 32.
+
+    In cases where there is possible ambiguity, the results will be ordered by likelihood. This
+    order is sometimes a little arbitrary, eg the results list for "32 cranberry" ranks 32
+    Cranberry Court in Staten Island first, and then 32 Cranberry Street in Brooklyn. If the
+    Brooklyn result is preferred, the search text can be made more explicit -- "32 cranberry st" or
+    "32 cranberry brooklyn" will both work. (The NYC GeoSearch can also be called in "autocomplete"
+    mode to give realtime user feedback during search text entry, displaying the results list and
+    allowing a user to pick -- but given the generally excellent search result quality, the added UI
+    complexity isn't worth it, and also this wouldn't be possible when using a "?search=" url
+    parameter.)
+
+    In rare cases, a search will yield a result list whose top-ranked item is problematic or
+    outright incorrect, eg:
+        - "87 3rd Avenue Brooklyn" ranks BIN 1006851 in Manhattan above BIN 3329450 in Brooklyn,
+          despite the literal string "Brooklyn" in the search text.
+        - "400 Union" ranks 400 CLASSON AVENUE above 400 UNION AVENUE and 400 UNION STREET. Some
+          addresses on Classon Avenue are apparently also indexed as "UNION PLACE" and NYC
+          GeoSearch prioritizes these; not sure if this is an error or an addressing quirk.
+        - "7517 Colonial Road" ranks the secondary structure BIN 3361003 (7517 GARAGE COLONIAL
+          ROAD) ahead of the main structure BIN 3148644 (7517 COLONIAL ROAD).
+
+    To fix these ordering issues, we have functions to compute a custom sort rank based on the
+    search text:
+        - If NYC GeoSearch's parser identifies a borough (or a likely borough abbreviation
+          identified as city, state, or region) in the search string, we prioritize results
+          matching that borough.
+        - If NYC GeoSearch's parser identifies a street name in the search string, we
+          prioritize results that include that street name
+        - We de-prioritize results with a housenumber suffix (GARAGE, REAR, etc) unless that
+          suffix or a likely abbreviation appears in the search string.
+        - All else being equal, we trust NYC GeoSearch's sort order.
+    */
+
+    function boroMatchRank(resultBin, searchBoro) {
+        if (searchBoro === 0) {
+            return 200000;
+        }
+        if (resultBin.slice(0,1) === searchBoro.toString()) {
+            return 100000;
+        }
+        return 900000;
+    }
+
+    function streetMatchRank(resultStreet, searchStreet) {
+        if (searchStreet === '') {
+            return 30000;
+        }
+        if (searchStreet === resultStreet) {
+            return 10000;
+        }
+        if (resultStreet.includes(searchStreet)) {
+            return 20000;
+        }
+        return 90000;
+    }
+
+    function suffixMatchRank(resultHousenumber, searchText) {
+
+        function suffixAlts(suffix) {
+            for (a of [['A GAR', 'A GARAGE'],
+             ['AIR', 'AIR RGTS', 'AIR RIGHT', 'AIR RIGHTS'],
+             ['B GAR', 'B GARAGE'],
+             ['FRONT', 'FRT'],
+             ['FRONT A', 'FRT A'],
+             ['FRONT B', 'FRT B'],
+             ['GAR', 'GARAGE'],
+             ['INTER A', 'INT A'],
+             ['INTER B', 'INT B'],
+             ['UND', 'UNDER', 'UNDRGRND', 'UNDERGROUND']]) {
+                if (a.includes(suffix)) {
+                    return a;
+                }
+            }
+            return [suffix];
+        }
+
+        const reMatch = resultHousenumber.match(/[A-Z\s-]+$/);
+        if (reMatch === null) {
+            return 2000;
+        }
+        for (s of suffixAlts(reMatch[0].trim())) {
+            if ((searchText + ' ').includes(s + ' ')) {
+                 return 1000;
+            }
+        }
+        return 9000;
+    }
+
     const nycGeosearchApiQuery = 'https://geosearch.planninglabs.nyc/v1/search?text=' + encodeURIComponent(searchText);
     writeSearchLog('\r\n"NYC GeoSearch" API query ' + nycGeosearchApiQuery + '\r\n');
     let response = await fetch(nycGeosearchApiQuery);
     if (response.ok) {
         let json = await response.json();
-
-        /* One great thing about NYC GeoSearch is that it can find addresses from freeform search text that need not include a borough. But a surprising defect is that even when the search text does explicitly include a borough, and the address parser at NYC Geosearch successfully identifies the borough, otherwise-identical search results in the wrong borough will sometimes be prioritized over results in the requested one. (Eg https://geosearch.planninglabs.nyc/v1/search?text=87%203rd%20Ave%20Brooklyn returns BIN 1006851 in Manhattan before BIN 3329450 in Brooklyn despite the parser correctly identifying {borough: "brooklyn"}.)
-
-        To alleviate this we'll examine the parser's output as reported in json.geocoding.query.parsed_text, and if we find a borough (or a likely borough abbreviation, sometimes misidentified by the parser as a region, city, or state) then we'll loop through the results in order to prefer a BIN from the correct borough if possible.
-
-        To help debug this process we'll examine and log the exact findings of the NYC Geosearch address parser, and our best guess about the specified borough (if any).
-        */
-
         let parserDesc = ' - unspecified parser found ';
         if (typeof json.geocoding.query.parser !== 'undefined') {
             parserDesc = ' - parser "' + json.geocoding.query.parser + '" found ';
@@ -113,69 +199,81 @@ async function doAddressSearch(searchText) {
         if (json.features.length === 0) {
             writeSearchLog(' - no NYC Geosearch results');
         } else {
-            let useResult = -1;
             if (json.features.length === 1) {
-                useResult = 0;
-                if (binInBoro(json.features[0].properties.pad_bin, guessedBoroNum)) {
-                    writeSearchLog(' - only one NYC Geosearch result, matches search boro\r\n');
-                } else {
-                    writeSearchLog(' - only one NYC Geosearch result, no boro match\r\n');
-                }
+                writeSearchLog(' - only one NYC Geosearch result');
             } else {
-                for (let i=0; i < json.features.length; i++) {
-                    if (binInBoro(json.features[i].properties.pad_bin, guessedBoroNum)) {
-                        writeSearchLog(' - ' + json.features.length + ' NYC Geosearch results, index ' + i + ' matches search boro\r\n');
-                        useResult = i;
-                        break;
-                    }
+                let upperSearch = searchText.toUpperCase();
+                let upperStreet = '';
+                if (typeof json.geocoding.query.parsed_text.street !== 'undefined') {
+                    upperStreet = json.geocoding.query.parsed_text.street.toUpperCase();
                 }
+                for (let i = 0; i < json.features.length; i++) {
+                    console.log(json.features[i]);
+                    console.log(upperStreet);
+                    json.features[i].nycaabs_sort_rank = boroMatchRank(json.features[i].properties.pad_bin, guessedBoroNum) + streetMatchRank(json.features[i].properties.pad_orig_stname, upperStreet) + suffixMatchRank(json.features[i].properties.housenumber, upperSearch) + i;
+                }
+                json.features.sort(function(a, b) { return a.nycaabs_sort_rank - b.nycaabs_sort_rank; });
+                writeSearchLog(' - ' + json.features.length + ' NYC Geosearch results, using top result after custom sort');
             }
-            if (useResult === -1) {
-                useResult = 0;
-                writeSearchLog(' - ' + json.features.length + ' NYC Geosearch results, no boro match, using index 0\r\n');
-            }
-            let bin = json.features[useResult].properties.pad_bin;
-            let houseNumber = json.features[useResult].properties.housenumber ?? '';
-            let street = json.features[useResult].properties.pad_orig_stname ?? '';
-            /* We also have json.features[useResult].properties.borough but we don't really need it since we're setting the boro based on the first digit of the bin. If someday we want to show zip codes, we can use json.features[useResult].properties.postalcode */
-            let boroCode = bin.slice(0,1);
 
-            /* BIG TODO -- At this point it would be great to take the address components (maybe as returned
-            in the parsed_text structure above, or failing that from the top search result, or failing that
-            parse the text ourselves) and feed them into a "Function1A" query on the NYC Planning Geoservice API
-            https://geoservice.planning.nyc.gov/, which has important advantages over the NYC GeoSearch API:
-             - First, it returns address ranges for all streets of multi-street buildings. (NYC GeoSearch only
-               returns the address range on the queried street.)
+            let geosearchResult = json.features[0];
+            let bin = geosearchResult.properties.pad_bin ?? '';
+            let boroCode = bin.slice(0,1);
+            if (boroCode === guessedBoroNum.toString()) {
+                writeSearchLog(', matches search boro\r\n');
+            } else {
+                writeSearchLog(', no boro match\r\n');
+            }
+            let houseNumber = geosearchResult.properties.housenumber ?? '';
+            let street = geosearchResult.properties.pad_orig_stname ?? '';
+            let bbl = geosearchResult.properties.pad_bbl ?? '';
+            /* We also have geosearchResult.properties.borough but we don't really need it since
+            we're setting the boro based on the first digit of the bin. If someday we want to show
+            zip codes, we can use geosearchResult.properties.postalcode but the quality of this
+            field is unknown.
+            */
+
+            /* BIG TODO -- At this point it would be great to take the address components (maybe as
+            returned in the parsed_text structure above, or failing that from the top search result,
+            or failing that parse the text ourselves) and feed them into a "Function1A" query on the
+            NYC Planning Geoservice API https://geoservice.planning.nyc.gov/, which has important
+            advantages over the NYC GeoSearch API:
+             - First, it returns address ranges for all streets of multi-street buildings. (NYC
+               GeoSearch only returns the address range on the queried street.)
              - Second, it gives additional address classification info (See "Address Types" at
                http://a030-goat.nyc.gov/goat/Glossary for documentation.)
-             - Third, it can find recently updated addresses and BINs by accessing the Transitional PAD file
-               (TPAD). NYC GeoSearch uses the standard PAD file, which is only updated quarterly.
+             - Third, it can find recently updated addresses and BINs by accessing the Transitional
+               PAD file (TPAD). NYC GeoSearch uses the standard PAD file, which is only updated
+               quarterly.
 
-            If we could get decent results from the NYC Planning Geoservice API, we probably wouldn't even
-            need to further examine the NYC GeoSearch results. (Curse these very similar names!) However,
-            access to NYC Planning Geoservice requires registration and department approval, and will only
-            work with a city-issued private API key. The current plan for this app is to host on github.io,
-            though, so keeping the API key private isn't possible.
+            If we could get decent results from the NYC Planning Geoservice API, we probably
+            wouldn't even need to sort or further examine the NYC GeoSearch results. (Curse these
+            very similar names!) However, access to NYC Planning Geoservice requires registration
+            and department approval, and will only work with a city-issued private API key. This app
+            is currently being hosted on github.io, though, so keeping the API key private isn't
+            possible.
 
             There's a web app wrapper around the NYC Planning Geoservice API called "GOAT",
-            http://a030-goat.nyc.gov/goat/. The GOAT app supports URL query parameters and is free to use
-            without credentials, but its cross-site scripting policy prevents us from screen-scraping the
-            results from our own web app. In theory we could attempt to work around this with a CORS proxy but
-            that's messy. (GOAT is also available as a downloadable offline desktop app, but that version only
-            uses the standard PAD file, not the TPAD file.)
+            http://a030-goat.nyc.gov/goat/. The GOAT app supports URL query parameters and is free
+            to use without credentials, but its cross-site scripting policy prevents us from screen-
+            scraping the results from our own web app. In theory we could attempt to work around
+            this with a CORS proxy but that's messy. (GOAT is also available as a downloadable
+            offline desktop app, but that version only uses the standard PAD file, not the TPAD
+            file.)
 
-            For now, we'll simply rely on the results from the NYC GeoSearch with the following known problems:
-             - Slightly out-of-date data (PAD only, not TPAD) that will not reflect newer developments and may
-               return obsolete or temporary BINs instead of current ones.
+            For now, we'll simply rely on the results from the NYC GeoSearch with the following
+            known limitations:
+             - Slightly out-of-date data (PAD only, not TPAD) that will not reflect newer
+               developments and may return obsolete or temporary BINs instead of current ones.
              - Incomplete housenumber range info, especially for multi-street buildings.
-             - Occasional need to skip over results in the wrong borough, or unsolicited GARAGE or REAR results,
-               as described in the coment at this top of this function.
+             - Need custom sort to downrank occasional results in the wrong borough, unsolicited
+               GARAGE or REAR results, etc, as described in the comment at this top of this
+               function.
             */
 
             writeSearchLog(' - showing address ' + houseNumber + ' ' + street + ', boro ' + boroCode + '\r\n');
             writeAddress(houseNumber, street, boroCode);
 
-            let bbl = json.features[useResult].properties.pad_bbl ?? '';
             const reMatch = bbl.match(bblRegex);
             if (reMatch === null) {
                 writeSearchLog(' - not using invalid BBL ' + bbl + '\r\n');
@@ -193,8 +291,8 @@ async function doAddressSearch(searchText) {
                 writeInvalidBin(bin);
             }
 
-            if ((Array.isArray(json.features[useResult].geometry.coordinates)) && (json.features[useResult].geometry.coordinates[0] < -73) && (json.features[useResult].geometry.coordinates[0] > 40)) {
-                markerLatLon = [json.features[useResult].geometry.coordinates[1], json.features[useResult].geometry.coordinates[0]];
+            if ((Array.isArray(geosearchResult.geometry.coordinates)) && (geosearchResult.geometry.coordinates[0] < -73) && (geosearchResult.geometry.coordinates[0] > 40)) {
+                markerLatLon = [geosearchResult.geometry.coordinates[1], geosearchResult.geometry.coordinates[0]];
             }
         }
     } else {
@@ -233,7 +331,14 @@ async function doFootprintSearch(bin) {
     let row = infoTable.insertRow(-1);
     row.className = 'rowHead';
     row.innerHTML = '<td>Footprint</td><td>Yr Built</td><td>Status</td><td>Date</td><td>Height</td>';
-/* From April 26th to May 4th 2022, the building footprints API switched places with the building center points API, presumably erroneously. If this happens again, change the API url from https://data.cityofnewyork.us/resource/qb5r-6dgf.json (documented at https://data.cityofnewyork.us/Housing-Development/Building-Footprints/nqwf-w8eh as the "building" endpoint) to https://data.cityofnewyork.us/resource/7w4b-tj9d.json (documented as the "building_p" endpoint). If this is a recurring problem, we can just always check "building_p" if "building" doesn't give us a footprint. */
+    /* From April 26th to May 4th 2022, the building footprints API switched places with the
+    building center points API, presumably erroneously. If this happens again, change the API url
+    from https://data.cityofnewyork.us/resource/qb5r-6dgf.json (documented at
+    https://data.cityofnewyork.us/Housing-Development/Building-Footprints/nqwf-w8eh as the
+    "building" endpoint) to https://data.cityofnewyork.us/resource/7w4b-tj9d.json (documented as the
+    "building_p" endpoint). If this is a recurring problem, we can switch to always checking
+    "building_p" if "building" doesn't give us a footprint.
+    */
     const footprintApiQuery = 'https://data.cityofnewyork.us/resource/qb5r-6dgf.json?bin=' + bin;
     writeSearchLog('\r\n"Building Footprints" API query ' + footprintApiQuery + '\r\n');
     let response = await fetch(footprintApiQuery);
@@ -321,6 +426,7 @@ async function doFootprintSearch(bin) {
 
 async function doDobJobSearch(bin) {
 
+//TODO -- add height into this sort as well, favoring results with a height
     function dobJobSortRank(type, date) {
         /* Ideally I want the top sort entry to be the same job you'd get if you searched this BIN in
         BIS -- because that's the job that usually links to the zoning documents. My working theory is
@@ -376,6 +482,7 @@ async function doDobJobSearch(bin) {
             } else {
                 writeSearchLog(' - ' + j + ' DOB Job Application results for this BIN\r\n');
             }
+            //TODO -- add height into this sort as well, favoring results with a height
             json.sort(function(a, b) { return dobJobSortRank(b.job_type, b.latest_action_date) - dobJobSortRank(a.job_type, a.latest_action_date); });
             for (let i = 0; i < j; i++) {
 
@@ -797,7 +904,6 @@ function menuNominatimReverse(e) {
 }
 
 
-
 /* MISC FUNCTIONS */
 //some of these might be better moved inside the relevant search functions
 
@@ -827,10 +933,6 @@ function guessBoroNum(searchBoro) {
         }
     }
     return 0;
-}
-
-function binInBoro(bin, boroNum) {
-    return (bin !== '') && (bin.slice(0,1) == boroNum);
 }
 
 function feetToMeters(feet) {
