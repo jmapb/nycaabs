@@ -1,7 +1,6 @@
 /* TODO -
 
  - About/documentation popup (including citation advice, warning about https redirection for GOAT)
- - Generate .osm files for multipolygon footprints (function makeFootprintOsmFile)
  - Add noscript message
  - Populate addressRangeList (not sure if this is worth doing without the full address range data from GOAT.)
 
@@ -81,27 +80,28 @@ async function doAddressSearch(searchText) {
     It works well even with minimal input, eg "32 middagh" will return only one item -- BIN 3001569,
     32 MIDDAGH STREET BROOKLYN -- without the need to specify "street" or "brooklyn" in the search.
     In this case the query is unambiguous, as there's only one road named Middagh in NYC, and
-    there's only one building on that road with housenumber 32.
+    only one building on that road with housenumber 32.
 
-    In cases where there is possible ambiguity, the results will be ordered by likelihood. This
+    In cases where there is possible ambiguity, NYC GeoSearch orders the results by likelihood. This
     order is sometimes a little arbitrary, eg the results list for "32 cranberry" ranks 32
-    Cranberry Court in Staten Island first, and then 32 Cranberry Street in Brooklyn. If the
-    Brooklyn result is preferred, the search text can be made more explicit -- "32 cranberry st" or
-    "32 cranberry brooklyn" will both work. (The NYC GeoSearch can also be called in "autocomplete"
-    mode to give realtime user feedback during search text entry, displaying the results list and
-    allowing a user to pick -- but given the generally excellent search result quality, the added UI
-    complexity isn't worth it, and also this wouldn't be possible when using a "?search=" url
-    parameter.)
+    Cranberry Court in Staten Island first, and then 32 Cranberry Street in Brooklyn. Nycaabs simply
+    uses the top result, so if the Brooklyn address is preferred, the search text can be made more
+    explicit -- either "32 cranberry st" or "32 cranberry brooklyn" will work. (The NYC GeoSearch
+    API can also be called in "autocomplete" mode to give realtime user feedback during search text
+    entry, displaying the results list and allowing a user to pick -- but given the generally
+    excellent search result quality, the added UI complexity isn't worth it, and also this wouldn't
+    help when initiating a search with a "?search=" url parameter.)
 
     In rare cases, a search will yield a result list whose top-ranked item is problematic or
     outright incorrect, eg:
-        - "87 3rd Avenue Brooklyn" ranks BIN 1006851 in Manhattan above BIN 3329450 in Brooklyn,
-          despite the literal string "Brooklyn" in the search text.
-        - "400 Union" ranks 400 CLASSON AVENUE above 400 UNION AVENUE and 400 UNION STREET. Some
-          addresses on Classon Avenue are apparently also indexed as "UNION PLACE" and NYC
-          GeoSearch prioritizes these; not sure if this is an error or an addressing quirk.
-        - "7517 Colonial Road" ranks the secondary structure BIN 3361003 (7517 GARAGE COLONIAL
-          ROAD) ahead of the main structure BIN 3148644 (7517 COLONIAL ROAD).
+        - for "87 3rd Avenue Brooklyn" NYC GeoSearch ranks BIN 1006851 in Manhattan above BIN
+          3329450 in Brooklyn, despite the literal string "Brooklyn" in the search text.
+        - for "400 Union" NYC GeoSearch ranks 400 CLASSON AVENUE above 400 UNION AVENUE and 400
+          UNION STREET. Some housenumbers on Classon Avenue are apparently also indexed as "UNION
+          PLACE" and prioritized above those on Union Avenue and Union Street; not sure if this is
+          a data error or an addressing quirk.
+        - for "7517 Colonial Road" NYC GeoSearch ranks the secondary structure BIN 3361003 (7517
+          GARAGE COLONIAL ROAD) ahead of the main structure BIN 3148644 (7517 COLONIAL ROAD).
 
     To fix these ordering issues, we have functions to compute a custom sort rank based on the
     search text:
@@ -113,6 +113,9 @@ async function doAddressSearch(searchText) {
         - We de-prioritize results with a housenumber suffix (GARAGE, REAR, etc) unless that
           suffix or a likely abbreviation appears in the search string.
         - All else being equal, we trust NYC GeoSearch's sort order.
+
+    Please raise a Github issue at https://github.com/jmapb/nycaabs/issues with examples of any
+    other address searches that return the wrong property, thanks!
     */
 
     function boroMatchRank(resultBin, searchBoro) {
@@ -141,7 +144,7 @@ async function doAddressSearch(searchText) {
     function suffixMatchRank(resultHousenumber, searchText) {
 
         function suffixAlts(suffix) {
-            for (a of [['A GAR', 'A GARAGE'],
+            for (const a of [['A GAR', 'A GARAGE'],
              ['AIR', 'AIR RGTS', 'AIR RIGHT', 'AIR RIGHTS'],
              ['B GAR', 'B GARAGE'],
              ['FRONT', 'FRT'],
@@ -162,7 +165,7 @@ async function doAddressSearch(searchText) {
         if (reMatch === null) {
             return 2000;
         }
-        for (s of suffixAlts(reMatch[0].trim())) {
+        for (const s of suffixAlts(reMatch[0].trim())) {
             if ((searchText + ' ').includes(s + ' ')) {
                  return 1000;
             }
@@ -197,10 +200,10 @@ async function doAddressSearch(searchText) {
         }
 
         if (json.features.length === 0) {
-            writeSearchLog(' - no NYC Geosearch results');
+            writeSearchLog(' - no NYC GeoSearch results');
         } else {
             if (json.features.length === 1) {
-                writeSearchLog(' - only one NYC Geosearch result');
+                writeSearchLog(' - only one NYC GeoSearch result');
             } else {
                 let upperSearch = searchText.toUpperCase();
                 let upperStreet = '';
@@ -208,12 +211,10 @@ async function doAddressSearch(searchText) {
                     upperStreet = json.geocoding.query.parsed_text.street.toUpperCase();
                 }
                 for (let i = 0; i < json.features.length; i++) {
-                    console.log(json.features[i]);
-                    console.log(upperStreet);
                     json.features[i].nycaabs_sort_rank = boroMatchRank(json.features[i].properties.pad_bin, guessedBoroNum) + streetMatchRank(json.features[i].properties.pad_orig_stname, upperStreet) + suffixMatchRank(json.features[i].properties.housenumber, upperSearch) + i;
                 }
                 json.features.sort(function(a, b) { return a.nycaabs_sort_rank - b.nycaabs_sort_rank; });
-                writeSearchLog(' - ' + json.features.length + ' NYC Geosearch results, using top result after custom sort');
+                writeSearchLog(' - ' + json.features.length + ' NYC GeoSearch results, using top result after custom sort');
             }
 
             let geosearchResult = json.features[0];
@@ -227,10 +228,10 @@ async function doAddressSearch(searchText) {
             let houseNumber = geosearchResult.properties.housenumber ?? '';
             let street = geosearchResult.properties.pad_orig_stname ?? '';
             let bbl = geosearchResult.properties.pad_bbl ?? '';
-            /* We also have geosearchResult.properties.borough but we don't really need it since
-            we're setting the boro based on the first digit of the bin. If someday we want to show
-            zip codes, we can use geosearchResult.properties.postalcode but the quality of this
-            field is unknown.
+            /* We also have geosearchResult.properties.borough but we don't need it since we're
+            setting the boro based on the first digit of the bin. If someday we want to show zip
+            codes, we can use geosearchResult.properties.postalcode but the quality of this field
+            is unknown.
             */
 
             /* BIG TODO -- At this point it would be great to take the address components (maybe as
@@ -331,6 +332,7 @@ async function doFootprintSearch(bin) {
     let row = infoTable.insertRow(-1);
     row.className = 'rowHead';
     row.innerHTML = '<td>Footprint</td><td>Yr Built</td><td>Status</td><td>Date</td><td>Height</td>';
+
     /* From April 26th to May 4th 2022, the building footprints API switched places with the
     building center points API, presumably erroneously. If this happens again, change the API url
     from https://data.cityofnewyork.us/resource/qb5r-6dgf.json (documented at
@@ -355,11 +357,11 @@ async function doFootprintSearch(bin) {
                 writeSearchLog(' - ' + footprintJson.length + ' footprint results for this BIN\r\n');
             }
             /* Loop through footprint results, adding footprints to slippy map and crafting download
-            links. Theoretically we might want to reverse sort by status date, but I haven't bothered
-            since I've never actually seen more than one result for a valid BIN. If we did ever have
-            multiple footprints, only the first one would be added to the map, and the BBL shown would
-            likely be from the first one as well (if it hadn't already been found by an address
-            search.) */
+            links. Theoretically we might want to reverse sort by status date, but I haven't since
+            I've never actually seen more than one footprint result for a valid BIN. As of now, if
+            the API did return multiple footprints, they would all be listed in the table but only
+            the first result would be added to the map.
+            */
             for (let i = 0; i < footprintJson.length; i++) {
                 //Take the BBL from this footprint record, if it's valid and needed
                 if (needBbl) {
@@ -389,27 +391,14 @@ async function doFootprintSearch(bin) {
                     formattedHeight = formatHeight(footprintJson[i].heightroof, heightInMeters);
                 }
 
-                if (footprintJson[i].the_geom.type == 'MultiPolygon') {
-                    footprintLinks = '<a href="data:text/xml;charset=utf-8,' + encodeURIComponent(makeFootprintOsmFile(i, bin, heightInMeters)) + '" download="bin' + bin + '_footprint.osm">Download as .osm</a>';
-                    /* JOSM's remote control "add_way" command can't handle a multipolygon footprint,
-                    so only generate the "Send to JOSM" link if this is a single-shape multipolygon
-                    (ie, not a multipolygon at all -- but they're always listed as 'MultiPolgon' in the
-                    API). At some point we might want to try JOSM's "load_data" remote control command,
-                    which would probably enable us to send an XML-encoded multipolygon directly from
-                    the browser. In theory we might also want to skip the "Send to JOSM" link for
-                    extremely complex polygons with many nodes that would result in a URL too long for
-                    the browser to handle. Maybe scan through the most complex footprints to see if
-                    this is a reasonable concern.
-                    */
-                    if (footprintJson[i].the_geom.coordinates[0].length === 1) {
-                        footprintLinks += ' <a class="josmLink" href="#0" onclick="javascript:sendFootprintToJosm(' + i + ', &apos;' + bin + '&apos;, &apos;' + heightInMeters + '&apos;)">Send to JOSM</a>';
-                    } else {
-                        footprintLinks += ' [multipolygon]';
+                footprintLinks = '';
+                if (footprintJson[i].the_geom.type === 'MultiPolygon') {
+                    processFootprint(i, bin, heightInMeters);
+                    if (typeof(footprintJson[i]?.nycaabs_osm_xml) !== 'undefined') {
+                        footprintLinks = '<a href="data:text/xml;charset=utf-8,' + encodeURIComponent(footprintJson[i].nycaabs_osm_xml) + '" download="bin' + bin + '_footprint.osm">Download as .osm</a>  <a class="josmLink" href="#0" onclick="javascript:sendFootprintToJosm(' + i + ')">Send to JOSM</a>';
                     }
-                    /* Possibly consider a geojson download link as well -- iD users would be able to load
-                       this, though it only works as an imagery layer, not importable data. */
-                } else {
-                    footprintLinks = '';
+                    //Possibly consider a geojson download link as well -- iD users would be able to
+                    //load this, though it only works as an imagery layer, not importable data.
                 }
 
                 row.innerHTML = '<td>' + footprintFeatureText(footprintJson[i].feat_code) + '</td><td>' + (footprintJson[i].cnstrct_yr ?? '?') + '</td><td>' + footprintJson[i].lststatype + '</td><td>' + footprintJson[i].lstmoddate.slice(0,10) + '</td><td>' + formattedHeight + '</td><td class="tdLink">' + footprintLinks + '</td>';
@@ -701,90 +690,136 @@ function constructUrlOverpassTurbo(bin) {
     return 'https://overpass-turbo.eu/?Q=%7B%7BgeocodeArea%3Anyc%7D%7D-%3E.nyc%3B%0Anwr%5B%22nycdoitt%3Abin%22~' + bin +  '%5D(area.nyc)%3B%0Aout%3B%0A%3E%3B%0Aout%3B%0A&R';
 }
 
-function makeFootprintOsmFile(footprintIndex, bin, heightInMeters) {
-    /* Currently the resulting XML data will specify the creation of new nodes when creating the footprint,
-    even if OSM already has nodes at the specified coordinates. To avoid duplicate nodes, we might consider
-    doing a "map?bbox" request from the OSM API to find any existing nodes with matching coordinates, and using
-    those existing nodes in the footprint way instead of adding new ones. This would make it easier to connect
-    abutting footprints, which would be good. In rare cases it might also connect a building to a node
-    belonging to a non-building, which might be bad. */
 
-    const polygons = footprintJson[footprintIndex].the_geom.coordinates[0]; //only handling a single building shape.... TODO download and scan the full dataset to see if multi-outer-polygon footprints exist
-    let osmFileTop = "<?xml version='1.0' encoding='UTF-8'?>\r\n<osm version='0.6' generator='NYCAABS'>\r\n";
-    let osmFileBottom = "";
-    let i = 0;
-    let nodeCoordinates = '';
-    if (polygons.length === 1) {
-        //this is a single polygon: add nodes, then add way with nodes and tags
-        osmFileBottom = "  <way id='-1' action='modify' visible='true'>\r\n";
-        let nodes = [];
-        let n = -1;
-        for (i = 0; i < polygons[0].length; i++) {
-            nodeCoordinates = "lat='" + polygons[0][i][1] + "' lon='" + polygons[0][i][0] + "'";
-            n = nodes.indexOf(nodeCoordinates);
-            if (n === -1) {
-                n = nodes.push(nodeCoordinates) - 1;
-                osmFileTop += "  <node id='-" + (n + 10000) + "' action='modify' visible='true' " + nodeCoordinates + " />\r\n";
-            }
-            osmFileBottom += "    <nd ref='-" + (n + 10000) + "' />\r\n";
+/* FOOTPRINT FUNCTIONS */
+
+function processFootprint(footprintIndex, bin, heightInMeters) {
+    /* Digest a downloaded building footprint and add our own custom properties: A bounding box, an
+    OSM XML representation of the footprint, and, for single-polygon buildings, a JOSM "add_way"
+    remote control command. */
+
+    function xmlTagList(tags) {
+        xmlTags = '';
+        for (const k in tags) {
+            xmlTags += "    <tag k='" + k + "' v='" + tags[k] + "' />\r\n";
         }
-    } else {
-        //this is a multipolygon shape with inner ways: add nodes, add ways with nodes, then add relation with ways and tags
-        //TODO -- make this handle multipolygons with inners ways!
-        alert('multipolygon footprint export not yet implemented!');
-        console.log("HERE'S A MULTIPOLYGON FOOTPRINT, POLYGON COUNT=" + polygons.length);
-        for (i = 0; i < polygons.length; i++) {
-            console.log("  POLYGON INDEX " + i);
-        }
+        return xmlTags;
     }
-    osmFileBottom += "    <tag k='building' v='yes' />\r\n";
+
+    function xmlNodeListForPolygon(polygon, nodes) {
+        let xmlNodes = '';
+        for (const c of polygon) {
+            xmlNodes += "    <nd ref='" + nodes[c[1] + "' lon='" + c[0]] + "' />\r\n";
+        }
+        return xmlNodes;
+    }
+
+    let footprint = footprintJson[footprintIndex];
+    footprint.nycaabs_osm_xml = "<?xml version='1.0' encoding='UTF-8'?>\r\n<osm version='0.6' generator='NYCAABS'>\r\n";
+    footprint.nycaabs_bbox_left = -73;
+    footprint.nycaabs_bbox_right = -75;
+    footprint.nycaabs_bbox_top = 40;
+    footprint.nycaabs_bbox_bottom = 42;
+    let elementCounter = -1;
+    let nodeKey = '';
+    const nodes = {};
+    const tags = {building: 'yes'};
+    tags['nycdoitt:bin'] = bin;
     if (heightInMeters !== '') {
-        osmFileBottom += "    <tag k='height' v='" + heightInMeters + "' />\r\n";
+        tags['height'] = heightInMeters;
     }
-    osmFileBottom += "    <tag k='nycdoitt:bin' v='" + bin + "' />\r\n  </way>\r\n</osm>\r\n";
-    return osmFileTop + osmFileBottom;
+
+    for (const polygon of footprint.the_geom.coordinates[0]) {
+        for (const c of polygon) {
+            //Round coordinates to OSM-standard 7 decimal digits
+            c[0] = c[0].toFixed(7);
+            c[1] = c[1].toFixed(7);
+            footprint.nycaabs_bbox_left = Math.min(footprint.nycaabs_bbox_left, c[0]);
+            footprint.nycaabs_bbox_right = Math.max(footprint.nycaabs_bbox_right, c[0]);
+            footprint.nycaabs_bbox_top = Math.max(footprint.nycaabs_bbox_top, c[1]);
+            footprint.nycaabs_bbox_bottom = Math.min(footprint.nycaabs_bbox_bottom, c[1]);
+            nodeKey = c[1] + "' lon='" + c[0];
+            //consider using a javascript map object with an array key instead of this hacky string key
+            if (!(nodeKey in nodes)) {
+                nodes[nodeKey] = elementCounter--;
+            }
+        }
+    }
+
+    for (const n in nodes) {
+        //Add each node definition to the OSM XML
+        footprint.nycaabs_osm_xml += "  <node id='" + nodes[n] + "' action='modify' visible='true' lat='" + n + "' />\r\n";
+    }
+
+    /* There are two different remote control commands that we can use to send a footprint to JOSM:
+    "add_way" and "load_data". The "add_way" command can't handle multipolygon footprints (and
+    there's no "add_relation" command) so we'll always use "load_data" for multipolygons, but for
+    single-polygon footprints we'll use "add_way" because it has some advantages:
+     - It only adds new nodes if neccessary, so JOSM will re-use any already loaded nodes at the
+       same coordinates. This is convenient for connecting new footprints to previously-imported
+       abbuting footprints. Rarely it might also result in the new footprint connecting to non-
+       building nodes, which could be problematic, but on balance this is still desired behavior.
+       (In theory we could achieve similar behavior from "load_data" with a preliminary OSM API
+       "map?bbox" call, swapping in the IDs of any existing nodes at the same locations.  Possibly
+       a topic for further investigation.)
+     - With "add_way", the new way and tags are recorded in JOSM's command stack, so can be undone
+       (ctrl-Z) if desired. The "load_data" command doesn't give us that courtesy, so accidentally
+       loading an incorrect footprint can leave your JOSM data layer in an awkward state.
+    So, if the polygon count is 1, we'll add a "nycaabs_josm_add" property to the footprint for
+    the sendFootprintToJosm function to find. If that property isn't found, sendFootprintToJosm
+    will send the OSM XML version of the footprint via "load_data".
+    */
+    if (footprint.the_geom.coordinates[0].length === 1) {
+        //Encode building footprint as a way
+        footprint.nycaabs_osm_xml += "  <way id='" + elementCounter + "' action='modify' visible='true'>\r\n";
+        footprint.nycaabs_osm_xml += xmlNodeListForPolygon(footprint.the_geom.coordinates[0][0], nodes);
+        footprint.nycaabs_osm_xml += xmlTagList(tags);
+        footprint.nycaabs_osm_xml += "  </way>\r\n";
+        //Assemble the JOSM "add_way" remote control command
+        footprint.nycaabs_josm_add = 'add_way?way=' + (footprint.the_geom.coordinates[0][0].map( x => x.reverse().join())).join(';') + '&addtags=' + (Object.entries(tags).map( t => t.join('='))).join('%7C');
+    } else {
+        //Encode building footprint as a multipolygon relation with an outer way and one or more inner ways
+        let xmlRelationMembers = '';
+        let role = 'outer';
+        for (const polygon of footprint.the_geom.coordinates[0]) {
+            xmlRelationMembers += "  <member type='way' ref='" + elementCounter + "' role='" + role + "' />\r\n";
+            footprint.nycaabs_osm_xml += "  <way id='" + elementCounter-- + "' action='modify' visible='true'>\r\n";
+            footprint.nycaabs_osm_xml += xmlNodeListForPolygon(polygon, nodes);
+            footprint.nycaabs_osm_xml += "  </way>\r\n";
+            role = 'inner';
+        }
+        footprint.nycaabs_osm_xml += "  <relation id='" + elementCounter + "' action='modify' visible='true'>\r\n";
+        footprint.nycaabs_osm_xml += xmlRelationMembers;
+        tags['type'] = 'multipolygon';
+        footprint.nycaabs_osm_xml += xmlTagList(tags);
+        footprint.nycaabs_osm_xml += "  </relation>\r\n";
+    }
+    footprint.nycaabs_osm_xml += "</osm>\r\n";
 }
 
-async function sendFootprintToJosm(footprintIndex, bin, heightInMeters) {
-    /* Note that when adding a new way using the "add_way" remote control command, JOSM will create the nodes
-    needed to add the way. But unlike when importing XML data, it will *only* create them if needed. If the
-    active JOSM data layer already has a node at the specified coordinates, that will be used instead.
-    Three important implications of this:
-      - We don't have to explicitly close the way by referencing the same starting and ending node ID, like we
-        do when specifying closed ways in OSM XML. As long as the footprint shape starts and ends at the same
-        coordinates, JOSM will find the new way's first node and reuse it as the last node, so the footprint
-        will be added as a closed way. (Good thing, because the "add_way" command doesn't allow us to specify
-        the reuse of a particular node ID.)
-      - The new footprint will connect to existing ways in JOSM if they contain nodes at the same coordinates.
-        This is most likely to happen if the building footprint in question, or an abutting one, was already
-        imported and hasn't been realigned since. Connecting abutting footprints is desired behavior, so we
-        issue a JOSM "load_and_zoom" remote control command before the "add_way" command, to make sure any
-        neighboring footprints are loaded in the active data layer.
-      - There's also a small chance that the new footprint could connect to non-building nodes, which could
-        lead to data errors. JOSM's validator might catch these, but of course it's primarily the individual
-        mapper's responsibility to check the data for any problems before uploading.
-        */
-    let nodes = footprintJson[footprintIndex].the_geom.coordinates[0][0];
-    let highLat = nodes[0][1];
-    let lowLat = nodes[0][1];
-    let highLon = nodes[0][0];
-    let lowLon = nodes[0][0];
-    let addWayUrl = 'http://localhost:8111/add_way?way=' + nodes[0][1] + ',' + nodes[0][0];
-    for (let i = 1; i < nodes.length; i++) {
-        addWayUrl += ';' + nodes[i][1] + ',' + nodes[i][0];
-        highLat = Math.max(highLat,nodes[i][1]);
-        lowLat = Math.min(lowLat,nodes[i][1]);
-        highLon = Math.max(highLon,nodes[i][0]);
-        lowLon = Math.min(lowLon,nodes[i][0]);
-    }
-    addWayUrl += '&addtags=building=yes%7Cnycdoitt:bin=' + bin;
-    if (heightInMeters !== '') {
-        addWayUrl+= '%7Cheight=' + heightInMeters;
-    }
-    let loadAndZoomUrl = 'http://localhost:8111/load_and_zoom?left=' + (lowLon - 0.0005) + '&right=' + (highLon+ 0.0005) + '&top=' + (highLat + 0.0004) + '&bottom=' + (lowLat - 0.0004);
-    //This load_and_zoom bbox is not international-date-line-safe... which is ok for NYC.
+async function sendFootprintToJosm(footprintIndex) {
+    //First, send a "load_and_zoom" command for surrounding context
+    let loadAndZoomUrl = 'http://localhost:8111/load_and_zoom?left=' + (footprintJson[footprintIndex].nycaabs_bbox_left - 0.0005) + '&right=' + (footprintJson[footprintIndex].nycaabs_bbox_right+ 0.0005) + '&top=' + (footprintJson[footprintIndex].nycaabs_bbox_top + 0.0004) + '&bottom=' + (footprintJson[footprintIndex].nycaabs_bbox_bottom - 0.0004);
+    writeSearchLog('\r\nJOSM remote control command ' + loadAndZoomUrl + '\r\n');
     await fetch(loadAndZoomUrl);
-    fetch(addWayUrl);
+
+    //Then send footprint with either "add_way" or "load_data" (see comments in processFootprint function)
+    let sendFootprintUrl = 'http://localhost:8111/';
+    if ('nycaabs_josm_add' in footprintJson[footprintIndex]) {
+        sendFootprintUrl += footprintJson[footprintIndex].nycaabs_josm_add;
+    } else {
+        const regex = /\s\s+/g;
+        sendFootprintUrl += 'load_data?data=' + encodeURIComponent(footprintJson[footprintIndex].nycaabs_osm_xml.replaceAll(regex, ''));
+    }
+
+    writeSearchLog('\r\nJOSM remote control command ' + sendFootprintUrl + '\r\n');
+    let response = await fetch(sendFootprintUrl);
+
+    //If the footprint delivery failed, retry once after one second
+    if (!response.ok) {
+        writeSearchLog('\r\n - retrying JOSM remote control command ' + sendFootprintUrl + '\r\n');
+        setTimeout(() => { fetch(sendFootprintUrl); }, 1000);
+    }
 }
 
 
