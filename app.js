@@ -74,7 +74,7 @@ async function doSearch() {
 
 async function doAddressSearch(searchText) {
     /* For the address search, we'll use the NYC GeoSearch API (https://geosearch.planninglabs.nyc)
-    which takes freeform address search text and returns a list of the most likely matching
+    which parses freeform address search text and returns a list of the most likely matching
     addresses with their associated BINs and other info.
 
     It works well even with minimal input, eg "32 middagh" will return only one item -- BIN 3001569,
@@ -87,19 +87,20 @@ async function doAddressSearch(searchText) {
     Cranberry Court in Staten Island first, and then 32 Cranberry Street in Brooklyn. Nycaabs simply
     uses the top result, so if the Brooklyn address is preferred, the search text can be made more
     explicit -- either "32 cranberry st" or "32 cranberry brooklyn" will work. (The NYC GeoSearch
-    API can also be called in "autocomplete" mode to give realtime user feedback during search text
-    entry, displaying the results list and allowing a user to pick -- but given the generally
-    excellent search result quality, the added UI complexity isn't worth it, and also this wouldn't
-    help when initiating a search with a "?search=" url parameter.)
+    API can also be called in "autocomplete" mode to allow apps to give realtime user feedback 
+    during search text entry, displaying the results list and allowing a user to pick -- but given 
+    the generally excellent search result quality, the added UI complexity isn't worth it, and also 
+    this wouldn't help when initiating a search with a "?search=" url parameter.)
 
     In rare cases, a search will yield a result list whose top-ranked item is problematic or
     outright incorrect, eg:
         - for "87 3rd Avenue Brooklyn" NYC GeoSearch ranks BIN 1006851 in Manhattan above BIN
           3329450 in Brooklyn, despite the literal string "Brooklyn" in the search text.
-        - for "400 Union" NYC GeoSearch ranks 400 CLASSON AVENUE above 400 UNION AVENUE and 400
-          UNION STREET. Some housenumbers on Classon Avenue are apparently also indexed as "UNION
-          PLACE" and prioritized above those on Union Avenue and Union Street; not sure if this is
-          a data error or an addressing quirk.
+        - for "400 Union" NYC GeoSearch ranks BIN 3056383 (400 CLASSON AVENUE) above BIN 3007326 
+          (400 UNION STREET) and BIN 3426258 (400 UNION AVENUE). Apparently some housenumbers on
+          Classon Avenue are also indexed under "UNION PLACE" and NYC GeoSearch prioritizes these
+          over similar addresses on Union Street and Union Avenue; not sure if this is a data
+          error or an addressing quirk.
         - for "7517 Colonial Road" NYC GeoSearch ranks the secondary structure BIN 3361003 (7517
           GARAGE COLONIAL ROAD) ahead of the main structure BIN 3148644 (7517 COLONIAL ROAD).
 
@@ -357,10 +358,10 @@ async function doFootprintSearch(bin) {
                 writeSearchLog(' - ' + footprintJson.length + ' footprint results for this BIN\r\n');
             }
             /* Loop through footprint results, adding footprints to slippy map and crafting download
-            links. Theoretically we might want to reverse sort by status date, but I haven't since
-            I've never actually seen more than one footprint result for a valid BIN. As of now, if
-            the API did return multiple footprints, they would all be listed in the table but only
-            the first result would be added to the map.
+            links. Theoretically we might want to reverse sort by status date, but I've never
+            actually seen more than one footprint result for a valid BIN. As of now, if the API did
+            return multiple footprints, they would all be listed in the table but only the first 
+            result would be added to the map.
             */
             for (let i = 0; i < footprintJson.length; i++) {
                 //Take the BBL from this footprint record, if it's valid and needed
@@ -415,8 +416,7 @@ async function doFootprintSearch(bin) {
 
 async function doDobJobSearch(bin) {
 
-//TODO -- add height into this sort as well, favoring results with a height
-    function dobJobSortRank(type, date) {
+    function dobJobSortRank(type, date, height) {
         /* Ideally I want the top sort entry to be the same job you'd get if you searched this BIN in
         BIS -- because that's the job that usually links to the zoning documents. My working theory is
         that BIS will return the newest NB (new building) job, and if no NB job is on record, then the
@@ -438,7 +438,10 @@ async function doDobJobSearch(bin) {
           SU - SUBDIVISION - UNIMPROVED
         */
         const jobTypes = ['A3', 'A2', 'A1', 'NB'];
-        return parseInt(String(jobTypes.indexOf(type) + 1) + date.slice(-4) + date.slice(0,2) + date.slice(3,5));
+        const sortRank = parseInt((String(jobTypes.indexOf(type) + 2) + date.slice(-4) + date.slice(0,2) + date.slice(3,5)) * 1000000000) + Math.round(height * 1000);
+        console.log ('index of ' + type + '=' + jobTypes.indexOf(type) + ', sortrank =' + sortRank);
+        return sortRank;
+        //return parseInt(String(jobTypes.indexOf(type) + 1) + date.slice(-4) + date.slice(0,2) + date.slice(3,5) + (10000000 + Math.round(height * 1000)).toString);
     }
 
     function formatDate(mmxddxyyyy) {
@@ -449,7 +452,8 @@ async function doDobJobSearch(bin) {
     let row = infoTable.insertRow(-1);
     row.className = 'rowHead';
     row.innerHTML = '<td>DOB Job</td><td>Type</td><td>Status</td><td>Date</td><td>Height</td><td class="tdLink"><a href="' + constructUrlBisJobs(bin) + '">Job&nbsp;List&nbsp;@&nbsp;BIS</a> <a href="' + constructUrlBisJobs(bin, 'A') + '">Active&nbsp;Zoning&nbsp;Job&nbsp;@&nbsp;BIS</a></td>';
-    let dobJobApiQuery = 'https://data.cityofnewyork.us/resource/ic3t-wcy2.json?$select=distinct%20job__,house__,street_name,borough,block,lot,job_type,job_status,latest_action_date,job_s1_no,proposed_height,gis_latitude,gis_longitude&$where=bin__=%27' + bin + '%27';
+    let dobJobApiQuery = 'https://data.cityofnewyork.us/resource/ic3t-wcy2.json?$select=distinct%20job__,house__,street_name,borough,block,lot,job_type,job_status,latest_action_date,proposed_height,gis_latitude,gis_longitude&$where=bin__=%27' + bin + '%27';
+    //Note: previously I was also requesting the "job_s1_no" field, and using it to populate the "allisn" url parameter of the BIS Zoning Documents page urls, imitating the urls generated by the BIS app. I've concluded that this field isn't neccessary (the Zoning Documents page seems to load just as well without it) so I'm no longer requesting or using it.
     writeSearchLog('\r\n"DOB Job Application Filings" API query ' + dobJobApiQuery + '\r\n');
     let response = await fetch(dobJobApiQuery);
     if (response.ok) {
@@ -471,8 +475,8 @@ async function doDobJobSearch(bin) {
             } else {
                 writeSearchLog(' - ' + j + ' DOB Job Application results for this BIN\r\n');
             }
-            //TODO -- add height into this sort as well, favoring results with a height
-            json.sort(function(a, b) { return dobJobSortRank(b.job_type, b.latest_action_date) - dobJobSortRank(a.job_type, a.latest_action_date); });
+            json.sort(function(a, b) { return dobJobSortRank(b.job_type, b.latest_action_date, b.proposed_height) - dobJobSortRank(a.job_type, a.latest_action_date, a.proposed_height); });
+            const listedJobsWithHeight = [];
             for (let i = 0; i < j; i++) {
 
                 if (needAddress) {
@@ -501,11 +505,15 @@ async function doDobJobSearch(bin) {
                         writeSearchLog(' - got latlon ' + json[i].gis_latitude + ', ' +  json[i].gis_longitude + ' from result ' + i + '\r\n');
                     }
                 }
-
-                row = infoTable.insertRow(-1);
-                row.className = 'rowBg' + (i % 2);
-                row.innerHTML = '<td>' + json[i].job__ + '</td><td>' + json[i].job_type + '</td><td>' + json[i].job_status + '</td><td>' + formatDate(json[i].latest_action_date) + '</td><td>' + formatHeight(json[i].proposed_height) + '</td><td class="tdLink"><a href="https://a810-bisweb.nyc.gov/bisweb/JobsQueryByNumberServlet?passjobnumber=' + json[i].job__ + '&passdocnumber=01">Job&nbsp;Details&nbsp;@&nbsp;BIS</a> <a href="https://a810-bisweb.nyc.gov/bisweb/JobsZoningDocumentsServlet?&allisn=' + json[i].job_s1_no + '&passjobnumber=' + json[i].job__ + '&passdocnumber=01&allbin=' + bin + '">Zoning&nbsp;Documents&nbsp;@&nbsp;BIS</a></td>';
-                //Unclear if we need to send the "passjobnumber" parameter -- experiment
+                
+                if (!listedJobsWithHeight.includes(json[i].job__)) {
+                    row = infoTable.insertRow(-1);
+                    row.className = 'rowBg' + (i % 2);
+                    row.innerHTML = '<td>' + json[i].job__ + '</td><td>' + json[i].job_type + '</td><td>' + json[i].job_status + '</td><td>' + formatDate(json[i].latest_action_date) + '</td><td>' + formatHeight(json[i].proposed_height) + '</td><td class="tdLink"><a href="https://a810-bisweb.nyc.gov/bisweb/JobsQueryByNumberServlet?passjobnumber=' + json[i].job__ + '&passdocnumber=01">Job&nbsp;Details&nbsp;@&nbsp;BIS</a> <a href="https://a810-bisweb.nyc.gov/bisweb/JobsZoningDocumentsServlet?passjobnumber=' + json[i].job__ + '&passdocnumber=01&allbin=' + bin + '">Zoning&nbsp;Documents&nbsp;@&nbsp;BIS</a></td>';      
+                    if (json[i].proposed_height > 0) {
+                        listedJobsWithHeight.push(json[i].job__);
+                    }
+                }
             }
         } else {
             writeSearchLog(' - no DOB Job Application results for this BIN\r\n');
