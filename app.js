@@ -87,16 +87,16 @@ async function doAddressSearch(searchText) {
     Cranberry Court in Staten Island first, and then 32 Cranberry Street in Brooklyn. Nycaabs simply
     uses the top result, so if the Brooklyn address is preferred, the search text can be made more
     explicit -- either "32 cranberry st" or "32 cranberry brooklyn" will work. (The NYC GeoSearch
-    API can also be called in "autocomplete" mode to allow apps to give realtime user feedback 
-    during search text entry, displaying the results list and allowing a user to pick -- but given 
-    the generally excellent search result quality, the added UI complexity isn't worth it, and also 
+    API can also be called in "autocomplete" mode to allow apps to give realtime user feedback
+    during search text entry, displaying the results list and allowing a user to pick -- but given
+    the generally excellent search result quality, the added UI complexity isn't worth it, and also
     this wouldn't help when initiating a search with a "?search=" url parameter.)
 
     In rare cases, a search will yield a result list whose top-ranked item is problematic or
     outright incorrect, eg:
         - for "87 3rd Avenue Brooklyn" NYC GeoSearch ranks BIN 1006851 in Manhattan above BIN
           3329450 in Brooklyn, despite the literal string "Brooklyn" in the search text.
-        - for "400 Union" NYC GeoSearch ranks BIN 3056383 (400 CLASSON AVENUE) above BIN 3007326 
+        - for "400 Union" NYC GeoSearch ranks BIN 3056383 (400 CLASSON AVENUE) above BIN 3007326
           (400 UNION STREET) and BIN 3426258 (400 UNION AVENUE). Apparently some housenumbers on
           Classon Avenue are also indexed under "UNION PLACE" and NYC GeoSearch prioritizes these
           over similar addresses on Union Street and Union Avenue; not sure if this is a data
@@ -110,7 +110,7 @@ async function doAddressSearch(searchText) {
           identified as city, state, or region) in the search string, we prioritize results
           matching that borough.
         - If NYC GeoSearch's parser identifies a street name in the search string, we
-          prioritize results that include that street name
+          prioritize results that include that street name.
         - We de-prioritize results with a housenumber suffix (GARAGE, REAR, etc) unless that
           suffix or a likely abbreviation appears in the search string.
         - All else being equal, we trust NYC GeoSearch's sort order.
@@ -212,7 +212,7 @@ async function doAddressSearch(searchText) {
                     upperStreet = json.geocoding.query.parsed_text.street.toUpperCase();
                 }
                 for (let i = 0; i < json.features.length; i++) {
-                    json.features[i].nycaabs_sort_rank = boroMatchRank(json.features[i].properties.pad_bin, guessedBoroNum) + streetMatchRank(json.features[i].properties.pad_orig_stname, upperStreet) + suffixMatchRank(json.features[i].properties.housenumber, upperSearch) + i;
+                    json.features[i].nycaabs_sort_rank = boroMatchRank(json.features[i].properties.pad_bin, guessedBoroNum) + streetMatchRank(json.features[i].properties.pad_orig_stname, upperStreet) + suffixMatchRank(json.features[i].properties.housenumber ?? '', upperSearch) + i;
                 }
                 json.features.sort(function(a, b) { return a.nycaabs_sort_rank - b.nycaabs_sort_rank; });
                 writeSearchLog(' - ' + json.features.length + ' NYC GeoSearch results, using top result after custom sort');
@@ -360,7 +360,7 @@ async function doFootprintSearch(bin) {
             /* Loop through footprint results, adding footprints to slippy map and crafting download
             links. Theoretically we might want to reverse sort by status date, but I've never
             actually seen more than one footprint result for a valid BIN. As of now, if the API did
-            return multiple footprints, they would all be listed in the table but only the first 
+            return multiple footprints, they would all be listed in the table but only the first
             result would be added to the map.
             */
             for (let i = 0; i < footprintJson.length; i++) {
@@ -394,6 +394,7 @@ async function doFootprintSearch(bin) {
 
                 footprintLinks = '';
                 if (footprintJson[i].the_geom.type === 'MultiPolygon') {
+                    //Note that this dataset encodes *all* footprints as type 'MultiPolygon', even for simple footprints
                     processFootprint(i, bin, heightInMeters);
                     if (typeof(footprintJson[i]?.nycaabs_osm_xml) !== 'undefined') {
                         footprintLinks = '<a href="data:text/xml;charset=utf-8,' + encodeURIComponent(footprintJson[i].nycaabs_osm_xml) + '" download="bin' + bin + '_footprint.osm">Download as .osm</a>  <a class="josmLink" href="#0" onclick="javascript:sendFootprintToJosm(' + i + ')">Send to JOSM</a>';
@@ -438,10 +439,47 @@ async function doDobJobSearch(bin) {
           SU - SUBDIVISION - UNIMPROVED
         */
         const jobTypes = ['A3', 'A2', 'A1', 'NB'];
-        const sortRank = parseInt((String(jobTypes.indexOf(type) + 2) + date.slice(-4) + date.slice(0,2) + date.slice(3,5)) * 1000000000) + Math.round(height * 1000);
-        console.log ('index of ' + type + '=' + jobTypes.indexOf(type) + ', sortrank =' + sortRank);
-        return sortRank;
-        //return parseInt(String(jobTypes.indexOf(type) + 1) + date.slice(-4) + date.slice(0,2) + date.slice(3,5) + (10000000 + Math.round(height * 1000)).toString);
+        return parseInt((String(jobTypes.indexOf(type) + 2) + date.slice(-4) + date.slice(0,2) + date.slice(3,5)) * 1000000000) + Math.round(height * 1000);
+    }
+
+    function expandJobType(code) {
+        const jobTypes = { A1: 'Alteration Type 1 (Major alteration, changes to building use or occupancy)',
+                           A2: 'Alteration Type 2 (Major alteration, no changes to building use or occupancy)',
+                           A3: 'Alteration Type 3 (Minor alteration)',
+                           DM: 'Full Demolition',
+                           NB: 'New Building',
+                           PA: 'Place of Assembly',
+                           PR: 'Limited Alteration Application (Alteration Repair Application)',
+                           SC: 'Subdivision - Condo',
+                           SG: 'Sign',
+                           SI: 'Subdivision - Improved',
+                           SU: 'Subdivision - Unimproved'
+                           };
+        return jobTypes[code] ?? 'Unknown job type code ' + code;
+    }
+
+    function expandJobStatus(code) {
+        const jobStatuses = { A: 'Pre-Filed',
+                              B: 'Application Processed - Part-No Payment',
+                              C: 'Application Processed - Payment Only',
+                              D: 'Application Processed - Completed',
+                              E: 'Application Processed - No Plan Exam',
+                              F: 'Application Assigned To Plan Examiner',
+                              G: 'PAA Fee Due',
+                              H: 'Plan Exam - In Process',
+                              I: 'Sign-Off (ARA)',
+                              J: 'Plan Exam - Disapproved',
+                              K: 'Plan Exam - Partial Approval',
+                              L: 'Plan Exam PAA - Pending Fee Estimation',
+                              M: 'Plan Exam PAA - Fee Resolved',
+                              P: 'Plan Exam - Approved',
+                              Q: 'Permit Issued - Partial Job',
+                              R: 'Permit Issued - Entire Job/Work',
+                              U: 'Completed',
+                              X: 'Signed-Off',
+                              3: 'Suspended'
+                            };
+        return jobStatuses[code] ?? 'Unknown job status code ' + code;
     }
 
     function formatDate(mmxddxyyyy) {
@@ -477,6 +515,7 @@ async function doDobJobSearch(bin) {
             }
             json.sort(function(a, b) { return dobJobSortRank(b.job_type, b.latest_action_date, b.proposed_height) - dobJobSortRank(a.job_type, a.latest_action_date, a.proposed_height); });
             const listedJobsWithHeight = [];
+            let addedRowCount = 0;
             for (let i = 0; i < j; i++) {
 
                 if (needAddress) {
@@ -505,11 +544,12 @@ async function doDobJobSearch(bin) {
                         writeSearchLog(' - got latlon ' + json[i].gis_latitude + ', ' +  json[i].gis_longitude + ' from result ' + i + '\r\n');
                     }
                 }
-                
+
                 if (!listedJobsWithHeight.includes(json[i].job__)) {
                     row = infoTable.insertRow(-1);
-                    row.className = 'rowBg' + (i % 2);
-                    row.innerHTML = '<td>' + json[i].job__ + '</td><td>' + json[i].job_type + '</td><td>' + json[i].job_status + '</td><td>' + formatDate(json[i].latest_action_date) + '</td><td>' + formatHeight(json[i].proposed_height) + '</td><td class="tdLink"><a href="https://a810-bisweb.nyc.gov/bisweb/JobsQueryByNumberServlet?passjobnumber=' + json[i].job__ + '&passdocnumber=01">Job&nbsp;Details&nbsp;@&nbsp;BIS</a> <a href="https://a810-bisweb.nyc.gov/bisweb/JobsZoningDocumentsServlet?passjobnumber=' + json[i].job__ + '&passdocnumber=01&allbin=' + bin + '">Zoning&nbsp;Documents&nbsp;@&nbsp;BIS</a></td>';      
+                    row.className = 'rowBg' + (addedRowCount % 2);
+                    row.innerHTML = '<td>' + json[i].job__ + '</td><td><abbr title="' + expandJobType(json[i].job_type) + '">' + json[i].job_type + '<abbr></td><td><abbr title="' + expandJobStatus(json[i].job_status) + '">' + json[i].job_status + '<abbr></td><td>' + formatDate(json[i].latest_action_date) + '</td><td>' + formatHeight(json[i].proposed_height) + '</td><td class="tdLink"><a href="https://a810-bisweb.nyc.gov/bisweb/JobsQueryByNumberServlet?passjobnumber=' + json[i].job__ + '&passdocnumber=01">Job&nbsp;Details&nbsp;@&nbsp;BIS</a> <a href="https://a810-bisweb.nyc.gov/bisweb/JobsZoningDocumentsServlet?passjobnumber=' + json[i].job__ + '&passdocnumber=01&allbin=' + bin + '">Zoning&nbsp;Documents&nbsp;@&nbsp;BIS</a></td>';
+                    addedRowCount++;
                     if (json[i].proposed_height > 0) {
                         listedJobsWithHeight.push(json[i].job__);
                     }
