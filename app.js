@@ -1,6 +1,6 @@
 /* TODO -
 
- - About/documentation popup (including citation advice, warning about https redirection for GOAT)
+ - Display "message" reply from API, if it exists
  - Add noscript message
  - Populate addressRangeList (not sure if this is worth doing without the full address range data from GOAT.)
 
@@ -77,48 +77,33 @@ async function doAddressSearch(searchText) {
     which parses freeform address search text and returns a list of the most likely matching
     addresses with their associated BINs and other info.
 
-    It works well even with minimal input, eg "32 middagh" will return only one item -- BIN 3001569,
-    32 MIDDAGH STREET BROOKLYN -- without the need to specify "street" or "brooklyn" in the search.
-    In this case the query is unambiguous, as there's only one road named Middagh in NYC, and
-    only one building on that road with housenumber 32.
+    It works well even with minimal input, eg "32 middagh" will return BIN 3001569 (32 MIDDAGH
+    STREET BROOKLYN) as the top ranked result without the need to specify "street" or "brooklyn" in
+    the search. This is unambiguous since there's only one road named Middagh in NYC, and only one
+    building on that road with housenumber 32.
 
-    In cases where there is possible ambiguity, NYC GeoSearch orders the results by likelihood. This
-    order is sometimes a little arbitrary, eg the results list for "32 cranberry" ranks 32
-    Cranberry Court in Staten Island first, and then 32 Cranberry Street in Brooklyn. Nycaabs simply
-    uses the top result, so if the Brooklyn address is preferred, the search text can be made more
-    explicit -- either "32 cranberry st" or "32 cranberry brooklyn" will work. (The NYC GeoSearch
-    API can also be called in "autocomplete" mode to allow apps to give realtime user feedback
-    during search text entry, displaying the results list and allowing a user to pick -- but given
-    the generally excellent search result quality, the added UI complexity isn't worth it, and also
-    this wouldn't help when initiating a search with a "?search=" url parameter.)
+    A more ambiguous query, "32 cranberry", ranks 32 Cranberry Court in Staten Island first, and
+    then 32 Cranberry Street in Brooklyn. Nycaabs simply uses the top result, so if the Brooklyn
+    address is preferred, the search text can be made more explicit by adding "street" or "st".
 
-    In rare cases, a search will yield a result list whose top-ranked item is problematic or
-    outright incorrect, eg:
-        - for "87 3rd Avenue Brooklyn" NYC GeoSearch ranks BIN 1006851 in Manhattan above BIN
-          3329450 in Brooklyn, despite the literal string "Brooklyn" in the search text.
-        - for "400 Union" NYC GeoSearch ranks BIN 3056383 (400 CLASSON AVENUE) above BIN 3007326
-          (400 UNION STREET) and BIN 3426258 (400 UNION AVENUE). Apparently some housenumbers on
-          Classon Avenue are also indexed under "UNION PLACE" and NYC GeoSearch prioritizes these
-          over similar addresses on Union Street and Union Avenue; not sure if this is a data
-          error or an addressing quirk.
-        - for "7517 Colonial Road" NYC GeoSearch ranks the secondary structure BIN 3361003 (7517
-          GARAGE COLONIAL ROAD) ahead of the main structure BIN 3148644 (7517 COLONIAL ROAD).
-
-    To fix these ordering issues, we have functions to compute a custom sort rank based on the
-    search text:
-        - If NYC GeoSearch's parser identifies a borough (or a likely borough abbreviation
-          identified as city, state, or region) in the search string, we prioritize results
-          matching that borough.
-        - If NYC GeoSearch's parser identifies a street name in the search string, we
-          prioritize results that include that street name.
-        - We de-prioritize results with a housenumber suffix (GARAGE, REAR, etc) unless that
-          suffix or a likely abbreviation appears in the search string.
-        - All else being equal, we trust NYC GeoSearch's sort order.
-
-    Please raise a Github issue at https://github.com/jmapb/nycaabs/issues with examples of any
-    other address searches that return the wrong property, thanks!
+    Querying the API for "32 cranberry brooklyn" without the street suffix will still return the
+    Staten Island address first, however. This is new behavior in v2 of GeoSearch, which appears
+    to be much more reliant on the query containing a valid street suffix than v1 did. There are
+    definitely some upsides to the v2 API though. The old v1 would sometimes return unquestionably
+    incorrect results and, for certain addresses, would *never* rank the right result first no
+    matter how explicit the query text.
+    
+    For NYC GeoSearch v1, Nycaabs had a multi-tier custom sort to deal with these edge cases. We
+    now use a much simpler sort that only compares the boro guessed from the parsed search text
+    to the boro of the returned properties. This enables us to search using eg "87 3rd av mh"
+    instead of need to spell out "87 3rd av manhattan"
+    
+    The API v2 is still very new and may have its own mysterious edge cases that need massaging.
+    Please raise a Github issue at https://github.com/jmapb/nycaabs/issues with examples of any  
+    address searches that return the wrong property, thanks!
+    
     */
-
+    
     function boroMatchRank(resultBin, searchBoro) {
         if (searchBoro === 0) {
             return 200000;
@@ -128,6 +113,8 @@ async function doAddressSearch(searchText) {
         }
         return 900000;
     }
+
+/*  These previously-used sort rank functions don't seem to benefit the v2 results:
 
     function streetMatchRank(resultStreet, searchStreet) {
         if (searchStreet === '') {
@@ -173,6 +160,7 @@ async function doAddressSearch(searchText) {
         }
         return 9000;
     }
+    */
 
     const nycGeosearchApiQuery = 'https://geosearch.planninglabs.nyc/v2/search?text=' + encodeURIComponent(searchText);
     writeSearchLog('\r\n"NYC GeoSearch" API query ' + nycGeosearchApiQuery + '\r\n');
@@ -184,19 +172,11 @@ async function doAddressSearch(searchText) {
             parserDesc = ' - parser "' + json.geocoding.query.parser + '" found ';
         }
         writeSearchLog(parserDesc + JSON.stringify(json.geocoding.query.parsed_text) + '\r\n');
+        
+       
         let guessedBoroNum = 0;
-        if (typeof json.geocoding.query.parsed_text.borough !== 'undefined') {
-            guessedBoroNum = guessBoroNum(json.geocoding.query.parsed_text.borough);
-        } else if (typeof json.geocoding.query.parsed_text.locality !== 'undefined') {
-            guessedBoroNum = guessBoroNum(json.geocoding.query.parsed_text.locality);
-        } else if (typeof json.geocoding.query.parsed_text.admin !== 'undefined') {
+        if (typeof json.geocoding.query.parsed_text.admin !== 'undefined') {
             guessedBoroNum = guessBoroNum(json.geocoding.query.parsed_text.admin);
-        } else if (typeof json.geocoding.query.parsed_text.regions !== 'undefined') {
-            guessedBoroNum = guessBoroNum(json.geocoding.query.parsed_text.regions[0]);
-        } else if (typeof json.geocoding.query.parsed_text.city !== 'undefined') {
-            guessedBoroNum = guessBoroNum(json.geocoding.query.parsed_text.city);
-        } else if (typeof json.geocoding.query.parsed_text.state !== 'undefined') {
-            guessedBoroNum = guessBoroNum(json.geocoding.query.parsed_text.state);
         }
         if (guessedBoroNum === 0) {
             writeSearchLog(' - search text does not appear to specify a boro\r\n');
@@ -216,7 +196,7 @@ async function doAddressSearch(searchText) {
                     upperStreet = json.geocoding.query.parsed_text.street.toUpperCase();
                 }
                 for (let i = 0; i < json.features.length; i++) {
-                    json.features[i].nycaabs_sort_rank = boroMatchRank(json.features[i].properties.addendum.pad.bin, guessedBoroNum) + streetMatchRank(json.features[i].properties.street, upperStreet) + suffixMatchRank(json.features[i].properties.housenumber ?? '', upperSearch) + i;
+                    json.features[i].nycaabs_sort_rank = boroMatchRank(json.features[i].properties.addendum.pad.bin, guessedBoroNum); // + streetMatchRank(json.features[i].properties.street, upperStreet) + suffixMatchRank(json.features[i].properties.housenumber ?? '', upperSearch) + i;
                 }
                 json.features.sort(function(a, b) { return a.nycaabs_sort_rank - b.nycaabs_sort_rank; });
                 writeSearchLog(' - ' + json.features.length + ' NYC GeoSearch results, using top result after custom sort');
@@ -1002,11 +982,12 @@ function validBin(bin) {
 function guessBoroNum(searchBoro) {
     const boroGuesses = { m: 1,
                           q: 4,
-                          s: 5,
                           bk: 3,
                           bl: 3,
                           bx: 2,
                           ne: 1,
+                          si: 5,
+                          st: 5,
                           brk: 3,
                           brx: 2,
                           the: 2,
