@@ -174,7 +174,7 @@ async function doAddressSearch(searchText) {
         return 9000;
     }
 
-    const nycGeosearchApiQuery = 'https://geosearch.planninglabs.nyc/v1/search?text=' + encodeURIComponent(searchText);
+    const nycGeosearchApiQuery = 'https://geosearch.planninglabs.nyc/v2/search?text=' + encodeURIComponent(searchText);
     writeSearchLog('\r\n"NYC GeoSearch" API query ' + nycGeosearchApiQuery + '\r\n');
     let response = await fetch(nycGeosearchApiQuery);
     if (response.ok) {
@@ -187,6 +187,10 @@ async function doAddressSearch(searchText) {
         let guessedBoroNum = 0;
         if (typeof json.geocoding.query.parsed_text.borough !== 'undefined') {
             guessedBoroNum = guessBoroNum(json.geocoding.query.parsed_text.borough);
+        } else if (typeof json.geocoding.query.parsed_text.locality !== 'undefined') {
+            guessedBoroNum = guessBoroNum(json.geocoding.query.parsed_text.locality);
+        } else if (typeof json.geocoding.query.parsed_text.admin !== 'undefined') {
+            guessedBoroNum = guessBoroNum(json.geocoding.query.parsed_text.admin);
         } else if (typeof json.geocoding.query.parsed_text.regions !== 'undefined') {
             guessedBoroNum = guessBoroNum(json.geocoding.query.parsed_text.regions[0]);
         } else if (typeof json.geocoding.query.parsed_text.city !== 'undefined') {
@@ -212,14 +216,14 @@ async function doAddressSearch(searchText) {
                     upperStreet = json.geocoding.query.parsed_text.street.toUpperCase();
                 }
                 for (let i = 0; i < json.features.length; i++) {
-                    json.features[i].nycaabs_sort_rank = boroMatchRank(json.features[i].properties.pad_bin, guessedBoroNum) + streetMatchRank(json.features[i].properties.pad_orig_stname, upperStreet) + suffixMatchRank(json.features[i].properties.housenumber ?? '', upperSearch) + i;
+                    json.features[i].nycaabs_sort_rank = boroMatchRank(json.features[i].properties.addendum.pad.bin, guessedBoroNum) + streetMatchRank(json.features[i].properties.street, upperStreet) + suffixMatchRank(json.features[i].properties.housenumber ?? '', upperSearch) + i;
                 }
                 json.features.sort(function(a, b) { return a.nycaabs_sort_rank - b.nycaabs_sort_rank; });
                 writeSearchLog(' - ' + json.features.length + ' NYC GeoSearch results, using top result after custom sort');
             }
 
             let geosearchResult = json.features[0];
-            let bin = geosearchResult.properties.pad_bin ?? '';
+            let bin = geosearchResult.properties.addendum.pad.bin ?? '';
             let boroCode = bin.slice(0,1);
             if (boroCode === guessedBoroNum.toString()) {
                 writeSearchLog(', matches search boro\r\n');
@@ -227,8 +231,8 @@ async function doAddressSearch(searchText) {
                 writeSearchLog(', no boro match\r\n');
             }
             let houseNumber = geosearchResult.properties.housenumber ?? '';
-            let street = geosearchResult.properties.pad_orig_stname ?? '';
-            let bbl = geosearchResult.properties.pad_bbl ?? '';
+            let street = geosearchResult.properties.street ?? '';
+            let bbl = geosearchResult.properties.addendum.pad.bbl ?? '';
             /* We also have geosearchResult.properties.borough but we don't need it since we're
             setting the boro based on the first digit of the bin. If someday we want to show zip
             codes, we can use geosearchResult.properties.postalcode but the quality of this field
