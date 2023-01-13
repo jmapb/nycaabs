@@ -95,7 +95,7 @@ async function doAddressSearch(searchText) {
     
     For NYC GeoSearch v1, Nycaabs had a multi-tier custom sort to deal with these edge cases. We
     now use a much simpler sort that only compares the boro guessed from the parsed search text
-    to the boro of the returned properties. This enables us to search using eg "87 3rd av mh"
+    to the boro of the returned properties. This enables us to search using eg "87 3rd av mn"
     instead of need to spell out "87 3rd av manhattan"
     
     The API v2 is still very new and may have its own mysterious edge cases that need massaging.
@@ -318,15 +318,17 @@ async function doFootprintSearch(bin) {
     row.className = 'rowHead';
     row.innerHTML = '<td>Footprint</td><td>Yr Built</td><td>Status</td><td>Date</td><td>Height</td>';
 
-    /* From April 26th to May 4th 2022, the building footprints API switched places with the
-    building center points API, presumably erroneously. If this happens again, change the API url
+    /* From 2022-04-26 to 2022-05-04, the building footprints API switched places with the
+    building center points API, presumably erroneously, so we switched the API url
     from https://data.cityofnewyork.us/resource/qb5r-6dgf.json (documented at
     https://data.cityofnewyork.us/Housing-Development/Building-Footprints/nqwf-w8eh as the
     "building" endpoint) to https://data.cityofnewyork.us/resource/7w4b-tj9d.json (documented as the
-    "building_p" endpoint). If this is a recurring problem, we can switch to always checking
-    "building_p" if "building" doesn't give us a footprint.
+    "building_p" endpoint) during that time. On 2023-01-13 it happened again, so we're currently
+    querying the "7w4b-tj9d" version of the dataset. If these continue to switch back and forth,
+    it might be easeir to always fall back to "building_p" (7w4b-tj9d) if "building" (qb5r-6dgf)
+    doesn't give us a footprint.
     */
-    const footprintApiQuery = 'https://data.cityofnewyork.us/resource/qb5r-6dgf.json?bin=' + bin;
+    const footprintApiQuery = 'https://data.cityofnewyork.us/resource/7w4b-tj9d.json?bin=' + bin;
     writeSearchLog('\r\n"Building Footprints" API query ' + footprintApiQuery + '\r\n');
     let response = await fetch(footprintApiQuery);
     if (response.ok) {
@@ -987,12 +989,12 @@ function guessBoroNum(searchBoro) {
                           bx: 2,
                           ne: 1,
                           si: 5,
-                          st: 5,
                           brk: 3,
                           brx: 2,
                           the: 2,
                           broo: 3,
-                          bron: 2
+                          bron: 2,
+                          stat: 5
                         };
     searchBoro = searchBoro.toLowerCase();
     for (const k in boroGuesses) {
