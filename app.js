@@ -14,6 +14,7 @@ const bblDiv = document.getElementById('bblDivId');
 const addressRangeList = document.getElementById('addressRangeListId');
 const infoTable = document.getElementById('infoTableId');
 const bblRegex = /^([1-5])([0-9]{5})([0-9]{4})$/;
+const latlonRegex = /^\s*([0-9\-\.]+)[\s,;]+([0-9\-\.]+)\s*$/;
 const boros = ['Manhattan', 'Bronx', 'Brooklyn', 'Queens', 'Staten Island'];
 var slippyMap = null;
 var markerLatLon = null;
@@ -48,12 +49,16 @@ async function doSearch() {
     footprintJson = [];
     footprintDrawn = false;
 
-    if (validBin(searchText)) {
+    const reMatch = searchText.match(latlonRegex);
+    if (reMatch !== null) {
+        writeSearchLog('Search text "' + searchText + '" ' + "looks like a latlon pair\r\nAttempting latlon search...\r\n");
+        await doFootprintLatlonSearch(reMatch[1], reMatch[2]);
+    } else if (validBin(searchText)) {
         writeSearchLog('Search text "' + searchText + '" looks like a BIN\r\nAttempting BIN search...\r\n');
         writeBin(searchText);
         await doBinSearch(searchText);
     } else {
-        writeSearchLog('Search text "' + searchText + '" ' + "doesn't look like a BIN\r\nAttempting address search...\r\n");
+        writeSearchLog('Search text "' + searchText + '" ' + "doesn't look like a BIN or latlon\r\nAttempting address search...\r\n");
         await doAddressSearch(searchText);
     }
 
@@ -62,7 +67,7 @@ async function doSearch() {
     }
 
     if (!footprintDrawn) {
-        /* No footprint was drawn... If we got latlon from one from the API calls, add a marker and zoom
+        /* No footprint was drawn... If we got latlon from one of the API calls, add a marker and zoom
         there, otherwise reset map to default state. */
         if (markerLatLon === null) {
             slippyMapDefault();
@@ -287,12 +292,30 @@ async function doAddressSearch(searchText) {
 }
 
 async function doBinSearch(bin) {
-    await doFootprintSearch(bin);
+    await doFootprintBinSearch(bin);
     await doDobJobSearch(bin);
     await doDobNowSearch(bin);
 }
 
-async function doFootprintSearch(bin) {
+async function doFootprintLatlonSearch(lat, lon) {
+    markerLatLon = [lat, lon];
+    const latLonApiQuery = 'https://data.cityofnewyork.us/api/geospatial/7w4b-tj9d?lat=' + lat + '&lng=' + lon + '&zoom=1';
+    writeSearchLog('\r\n"Building Footprints" API latlon query ' + latLonApiQuery + '\r\n');
+    let response = await fetch(latLonApiQuery);
+    if (response.ok) {
+        footprintJson = await response.json();
+        if (footprintJson.length > 0) {
+            const latlonBin = footprintJson[0].bin;
+            if (validBin(latlonBin)) {
+                writeSearchLog(' - found BIN ' + latlonBin + ', attemping BIN search...\r\n');
+                writeBin(latlonBin);
+                await doBinSearch(latlonBin)
+            }
+        }
+    }
+}
+
+async function doFootprintBinSearch(bin) {
 
     function footprintFeatureText(featureCode) {
         //Codes taken from https://github.com/CityOfNewYork/nyc-geo-metadata/blob/master/Metadata/Metadata_BuildingFootprints.md and https://github.com/CityOfNewYork/nyc-planimetrics/blob/master/Capture_Rules.md#building-footprint
@@ -329,7 +352,7 @@ async function doFootprintSearch(bin) {
     doesn't give us a footprint.
     */
     const footprintApiQuery = 'https://data.cityofnewyork.us/resource/7w4b-tj9d.json?bin=' + bin;
-    writeSearchLog('\r\n"Building Footprints" API query ' + footprintApiQuery + '\r\n');
+    writeSearchLog('\r\n"Building Footprints" API BIN query ' + footprintApiQuery + '\r\n');
     let response = await fetch(footprintApiQuery);
     if (response.ok) {
         footprintJson = await response.json();
@@ -485,6 +508,7 @@ async function doDobJobSearch(bin) {
         let j = json.length;
         if (j > 0) {
             let needAddress = (addressDiv.innerHTML === '');
+            writeSearchLog(' - needAddress=' + needAddress + '\r\n');
             let houseNumber = '';
             let street = '';
             let boroCode = bin.slice(0,1);
@@ -561,6 +585,7 @@ async function doDobNowSearch(bin) {
             return dobNowStatus.slice(0,j);
         }
         return dobNowStatus.replace('Certificate of Operation', 'Cert');
+        //check ?search=40.64242407021607 -73.98076415061952 for another lengthy status
     }
 
     let row = infoTable.insertRow(-1);
@@ -579,6 +604,7 @@ async function doDobNowSearch(bin) {
             }
             let j = json.length - 1;
             let needAddress = (addressDiv.innerHTML === '');
+            writeSearchLog(' - needAddress=' + needAddress + '\r\n');
             let houseNumber = '';
             let street = '';
             let boroCode = bin.slice(0,1);
@@ -865,6 +891,9 @@ function slippyMapInit() {
         slippyMap = L.map('slippyMapId',
                           {contextmenu: true,
                            contextmenuItems: [{
+                             text: 'Search here',
+                             callback: menuLatLonSearch
+                           }, '-', {
                              text: 'View at OSM',
                              callback: menuOsmView
                            }, {
@@ -939,6 +968,11 @@ function slippyMapAddTileLayer() {
 
 
 /* SLIPPY MAP CONTEXT MENU CALLBACK FUNCTIONS */
+
+function menuLatLonSearch(e) {
+    searchInput.value = e.latlng.lat + ' ' + e.latlng.lng
+    doSearch();
+}
 
 function menuOsmView(e) {
     window.open('https://www.openstreetmap.org/#map=19/' + e.latlng.lat + '/' + e.latlng.lng, '_blank');
