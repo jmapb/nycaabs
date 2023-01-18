@@ -97,18 +97,18 @@ async function doAddressSearch(searchText) {
     definitely some upsides to the v2 API though. The old v1 would sometimes return unquestionably
     incorrect results and, for certain addresses, would *never* rank the right result first no
     matter how explicit the query text.
-    
+
     For NYC GeoSearch v1, Nycaabs had a multi-tier custom sort to deal with these edge cases. We
     now use a much simpler sort that only compares the boro guessed from the parsed search text
     to the boro of the returned properties. This enables us to search using eg "87 3rd av mn"
     instead of need to spell out "87 3rd av manhattan"
-    
+
     The API v2 is still very new and may have its own mysterious edge cases that need massaging.
-    Please raise a Github issue at https://github.com/jmapb/nycaabs/issues with examples of any  
+    Please raise a Github issue at https://github.com/jmapb/nycaabs/issues with examples of any
     address searches that return the wrong property, thanks!
-    
+
     */
-    
+
     function boroMatchRank(resultBin, searchBoro) {
         if (searchBoro === 0) {
             return 200000;
@@ -177,8 +177,7 @@ async function doAddressSearch(searchText) {
             parserDesc = ' - parser "' + json.geocoding.query.parser + '" found ';
         }
         writeSearchLog(parserDesc + JSON.stringify(json.geocoding.query.parsed_text) + '\r\n');
-        
-       
+
         let guessedBoroNum = 0;
         if (typeof json.geocoding.query.parsed_text.admin !== 'undefined') {
             guessedBoroNum = guessBoroNum(json.geocoding.query.parsed_text.admin);
@@ -299,7 +298,7 @@ async function doBinSearch(bin) {
 
 async function doFootprintLatlonSearch(lat, lon) {
     markerLatLon = [lat, lon];
-    const latLonApiQuery = 'https://data.cityofnewyork.us/api/geospatial/7w4b-tj9d?lat=' + lat + '&lng=' + lon + '&zoom=1';
+    const latLonApiQuery = 'https://data.cityofnewyork.us/api/geospatial/7w4b-tj9d?lat=' + lat + '&lng=' + lon + '&zoom=17';
     writeSearchLog('\r\n"Building Footprints" API latlon query ' + latLonApiQuery + '\r\n');
     let response = await fetch(latLonApiQuery);
     if (response.ok) {
@@ -341,17 +340,16 @@ async function doFootprintBinSearch(bin) {
     row.className = 'rowHead';
     row.innerHTML = '<td>Footprint</td><td>Yr Built</td><td>Status</td><td>Date</td><td>Height</td>';
 
-    /* From 2022-04-26 to 2022-05-04, the building footprints API switched places with the
-    building center points API, presumably erroneously, so we switched the API url
-    from https://data.cityofnewyork.us/resource/qb5r-6dgf.json (documented at
+    /* From 2022-04-26 to 2022-05-04 and 2023-01-13 to 2023-01-17, the building footprints API 
+    switched places with the building center points API, presumably erroneously, so we switched 
+    the API url from https://data.cityofnewyork.us/resource/qb5r-6dgf.json (documented at
     https://data.cityofnewyork.us/Housing-Development/Building-Footprints/nqwf-w8eh as the
-    "building" endpoint) to https://data.cityofnewyork.us/resource/7w4b-tj9d.json (documented as the
-    "building_p" endpoint) during that time. On 2023-01-13 it happened again, so we're currently
-    querying the "7w4b-tj9d" version of the dataset. If these continue to switch back and forth,
-    it might be easeir to always fall back to "building_p" (7w4b-tj9d) if "building" (qb5r-6dgf)
+    "building" endpoint) to https://data.cityofnewyork.us/resource/7w4b-tj9d.json (documented as
+    the "building_p" endpoint) during those times. If these continue to switch back and forth, it
+    might be easier to always fall back to "building_p" (7w4b-tj9d) if "building" (qb5r-6dgf)
     doesn't give us a footprint.
     */
-    const footprintApiQuery = 'https://data.cityofnewyork.us/resource/7w4b-tj9d.json?bin=' + bin;
+    const footprintApiQuery = 'https://data.cityofnewyork.us/resource/qb5r-6dgf.json?bin=' + bin;
     writeSearchLog('\r\n"Building Footprints" API BIN query ' + footprintApiQuery + '\r\n');
     let response = await fetch(footprintApiQuery);
     if (response.ok) {
