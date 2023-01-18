@@ -299,7 +299,7 @@ async function doBinSearch(bin) {
 
 async function doFootprintLatlonSearch(lat, lon) {
     markerLatLon = [lat, lon];
-    const latLonApiQuery = 'https://data.cityofnewyork.us/api/geospatial/7w4b-tj9d?lat=' + lat + '&lng=' + lon + '&zoom=1';
+    const latLonApiQuery = 'https://data.cityofnewyork.us/api/geospatial/7w4b-tj9d?lat=' + lat + '&lng=' + lon + '&zoom=17';
     writeSearchLog('\r\n"Building Footprints" API latlon query ' + latLonApiQuery + '\r\n');
     let response = await fetch(latLonApiQuery);
     if (response.ok) {
