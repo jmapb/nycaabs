@@ -119,11 +119,9 @@ async function doAddressSearch(searchText) {
         return 900000;
     }
 
-/*  These previously-used sort rank functions don't seem to benefit the v2 results:
-
     function streetMatchRank(resultStreet, searchStreet) {
         if (searchStreet === '') {
-            return 30000;
+            return 40000;
         }
         if (searchStreet === resultStreet) {
             return 10000;
@@ -131,9 +129,13 @@ async function doAddressSearch(searchText) {
         if (resultStreet.includes(searchStreet)) {
             return 20000;
         }
+        if (searchStreet.includes(resultStreet)) {
+            return 30000;
+        }
         return 90000;
     }
-
+    
+/*  These previously-used sort rank functions don't seem to benefit the v2 results:
     function suffixMatchRank(resultHousenumber, searchText) {
 
         function suffixAlts(suffix) {
@@ -166,7 +168,14 @@ async function doAddressSearch(searchText) {
         return 9000;
     }
     */
-
+    
+    let parsedAddress = parseNycAddress(searchText);
+    let searchBoroNum = parsedAddress.borough ?? 0;
+    let searchStreet = parsedAddress.street ?? '';
+    
+    //To-do if parseNycAddress() gives us street and boro, attempt a Geoservice search (if we have a key cookie)
+    //If Geoservice fails us, fall back to NYC GeoSearch
+ 
     const nycGeosearchApiQuery = 'https://geosearch.planninglabs.nyc/v2/search?text=' + encodeURIComponent(searchText);
     writeSearchLog('\r\n"NYC GeoSearch" API query ' + nycGeosearchApiQuery + '\r\n');
     let response = await fetch(nycGeosearchApiQuery);
@@ -178,15 +187,16 @@ async function doAddressSearch(searchText) {
         }
         writeSearchLog(parserDesc + JSON.stringify(json.geocoding.query.parsed_text) + '\r\n');
 
-        let guessedBoroNum = 0;
-        if (typeof json.geocoding.query.parsed_text.admin !== 'undefined') {
-            guessedBoroNum = guessBoroNum(json.geocoding.query.parsed_text.admin);
-        }
-        if (guessedBoroNum === 0) {
-            writeSearchLog(' - search text does not appear to specify a boro\r\n');
-        } else {
-            writeSearchLog(' - search text appears to specify boro ' + guessedBoroNum + ' (' + boros[guessedBoroNum-1] + ')\r\n');
-        }
+
+        
+//        if (typeof json.geocoding.query.parsed_text.admin !== 'undefined') {
+//            guessedBoroNum = guessBoroNum(json.geocoding.query.parsed_text.admin);
+//        }
+//        if (guessedBoroNum === 0) {
+//            writeSearchLog(' - search text does not appear to specify a boro\r\n');
+//        } else {
+//            writeSearchLog(' - search text appears to specify boro ' + guessedBoroNum + ' (' + boros[guessedBoroNum-1] + ')\r\n');
+//        }
 
         if (json.features.length === 0) {
             writeSearchLog(' - no NYC GeoSearch results');
@@ -195,21 +205,26 @@ async function doAddressSearch(searchText) {
                 writeSearchLog(' - only one NYC GeoSearch result');
             } else {
                 let upperSearch = searchText.toUpperCase();
-                let upperStreet = '';
-                if (typeof json.geocoding.query.parsed_text.street !== 'undefined') {
-                    upperStreet = json.geocoding.query.parsed_text.street.toUpperCase();
-                }
+//                let upperStreet = '';
+//                if (typeof json.geocoding.query.parsed_text.street !== 'undefined') {
+//                    upperStreet = json.geocoding.query.parsed_text.street.toUpperCase();
+//                }
                 for (let i = 0; i < json.features.length; i++) {
-                    json.features[i].nycaabs_sort_rank = boroMatchRank(json.features[i].properties.addendum.pad.bin, guessedBoroNum); // + streetMatchRank(json.features[i].properties.street, upperStreet) + suffixMatchRank(json.features[i].properties.housenumber ?? '', upperSearch) + i;
+                    json.features[i].geosearch_rank = i;
+                    json.features[i].nycaabs_rank = boroMatchRank(json.features[i].properties.addendum.pad.bin, searchBoroNum) + streetMatchRank(json.features[i].properties.street, searchStreet); // + suffixMatchRank(json.features[i].properties.housenumber ?? '', upperSearch) + i;
                 }
-                json.features.sort(function(a, b) { return a.nycaabs_sort_rank - b.nycaabs_sort_rank; });
-                writeSearchLog(' - ' + json.features.length + ' NYC GeoSearch results, using top result after custom sort');
+                json.features.sort(function(a, b) { return a.nycaabs_rank - b.nycaabs_rank; });
+                if (json.features[0].geosearch_rank === 0) {
+                    writeSearchLog(' - ' + json.features.length + ' NYC GeoSearch results, using result 0');
+                } else {
+                    writeSearchLog(' - ' + json.features.length + ' NYC GeoSearch results, using result ' + json.features[0].geosearch_rank + ' after custom sort');
+                }
             }
 
             let geosearchResult = json.features[0];
             let bin = geosearchResult.properties.addendum.pad.bin ?? '';
             let boroCode = bin.slice(0,1);
-            if (boroCode === guessedBoroNum.toString()) {
+            if (boroCode === searchBoroNum.toString()) {
                 writeSearchLog(', matches search boro\r\n');
             } else {
                 writeSearchLog(', no boro match\r\n');
@@ -461,7 +476,7 @@ async function doDobJobSearch(bin) {
                            SG: 'Sign',
                            SI: 'Subdivision - Improved',
                            SU: 'Subdivision - Unimproved'
-                           };
+                         };
         return jobTypes[code] ?? 'Unknown job type code ' + code;
     }
 
