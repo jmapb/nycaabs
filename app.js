@@ -3,6 +3,13 @@
  - Display "message" reply from API, if it exists
  - Add noscript message
  - Populate addressRangeList (not sure if this is worth doing without the full address range data from GOAT.)
+ - Expand "Blvd" (maybe also "Blvd."?) before search ("213-03 NORTHERN blvd" gives wrong result)
+ - Query for HPD ID & link to HPD portal
+ 
+ "1745 Forest Avenue, Staten Island, New York 10302" vs "1745 Forest Avenue"??????
+ 
+ 
+ BIN 3428826 -- example where DOB has correct building height, height listed with footprint is much higher
 
 */
 
@@ -103,6 +110,9 @@ async function doAddressSearch(searchText) {
     to the boro of the returned properties. This enables us to search using eg "87 3rd av mn"
     instead of need to spell out "87 3rd av manhattan"
 
+    1515 Park Place
+    Franklin Av BK
+
     The API v2 is still very new and may have its own mysterious edge cases that need massaging.
     Please raise a Github issue at https://github.com/jmapb/nycaabs/issues with examples of any
     address searches that return the wrong property, thanks!
@@ -170,6 +180,7 @@ async function doAddressSearch(searchText) {
     */
     
     let parsedAddress = parseNycAddress(searchText);
+    writeSearchLog(' - parser "parse-nyc-address" found ' + JSON.stringify(parsedAddress));
     let searchBoroNum = parsedAddress.borough ?? 0;
     let searchStreet = parsedAddress.street ?? '';
     
@@ -355,16 +366,19 @@ async function doFootprintBinSearch(bin) {
     row.className = 'rowHead';
     row.innerHTML = '<td>Footprint</td><td>Yr Built</td><td>Status</td><td>Date</td><td>Height</td>';
 
-    /* From 2022-04-26 to 2022-05-04 and 2023-01-13 to 2023-01-17, the building footprints API 
-    switched places with the building center points API, presumably erroneously, so we switched 
-    the API url from https://data.cityofnewyork.us/resource/qb5r-6dgf.json (documented at
+    /* Normally, we get NYC building footprint data by querying the API endpoint
+    https://data.cityofnewyork.us/resource/qb5r-6dgf.json (documented at
     https://data.cityofnewyork.us/Housing-Development/Building-Footprints/nqwf-w8eh as the
-    "building" endpoint) to https://data.cityofnewyork.us/resource/7w4b-tj9d.json (documented as
-    the "building_p" endpoint) during those times. If these continue to switch back and forth, it
-    might be easier to always fall back to "building_p" (7w4b-tj9d) if "building" (qb5r-6dgf)
-    doesn't give us a footprint.
+    "building" endpoint). The city also publishes https://data.cityofnewyork.us/resource/7w4b-tj9d.json
+    (documented as the "building_p" endpoint) containing single points for each building, instead of
+    footprint polygons. Sometimes, inexplicably, these two endpoints "switch place", so we need to 
+    query 7w4b-tj9d for footprints. 
+    As of 2023-08-23, the endpoints are in this switched state, so the code currently calls "building_p"
+    (7w4b-tj9d) instead of "building" (qb5r-6dgf). We'll need to update when (and if) the problem is
+    corrected. Todo -- a permanent fix that will automatically fall back on 7w4b-tj9d if qb5r-6dgf isn't
+    delivering footprints.
     */
-    const footprintApiQuery = 'https://data.cityofnewyork.us/resource/qb5r-6dgf.json?bin=' + bin;
+    const footprintApiQuery = 'https://data.cityofnewyork.us/resource/7w4b-tj9d.json?bin=' + bin;
     writeSearchLog('\r\n"Building Footprints" API BIN query ' + footprintApiQuery + '\r\n');
     let response = await fetch(footprintApiQuery);
     if (response.ok) {
@@ -446,6 +460,8 @@ async function doDobJobSearch(bin) {
         newest A1, then A2, then A3 (various levels of building alterations) and after that who knows.
         So that's what this sort rank does. I have my doubts that this approach will work every time,
         but I haven't found any counterexamples yet. (Please report if found!)
+        
+        ***** TODO -- non-rejected plan should be sorted above rejected plan, see BIN 3049330 *****
 
         The full list of DOB job types (taken from BIS's JobsQueryByLocationServlet page) is:
           A1 - ALTERATION TYPE 1
@@ -521,7 +537,6 @@ async function doDobJobSearch(bin) {
         let j = json.length;
         if (j > 0) {
             let needAddress = (addressDiv.innerHTML === '');
-            writeSearchLog(' - needAddress=' + needAddress + '\r\n');
             let houseNumber = '';
             let street = '';
             let boroCode = bin.slice(0,1);
@@ -617,7 +632,6 @@ async function doDobNowSearch(bin) {
             }
             let j = json.length - 1;
             let needAddress = (addressDiv.innerHTML === '');
-            writeSearchLog(' - needAddress=' + needAddress + '\r\n');
             let houseNumber = '';
             let street = '';
             let boroCode = bin.slice(0,1);
@@ -1026,30 +1040,6 @@ function menuNominatimReverse(e) {
 function validBin(bin) {
     const reMatch = bin.match(/^[1-5]([0-9]{6})$/);
     return (reMatch !== null) && (reMatch[1] !== '000000');
-}
-
-function guessBoroNum(searchBoro) {
-    const boroGuesses = { m: 1,
-                          q: 4,
-                          bk: 3,
-                          bl: 3,
-                          bx: 2,
-                          ne: 1,
-                          si: 5,
-                          brk: 3,
-                          brx: 2,
-                          the: 2,
-                          broo: 3,
-                          bron: 2,
-                          stat: 5
-                        };
-    searchBoro = searchBoro.toLowerCase();
-    for (const k in boroGuesses) {
-        if (searchBoro.slice(0, k.length) === k) {
-            return boroGuesses[k];
-        }
-    }
-    return 0;
 }
 
 function feetToMeters(feet) {

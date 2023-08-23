@@ -14,7 +14,7 @@
             <h1>NYC Address and BIN Search &nbsp;<span id="helpId"><a href="help.html">?</a></span></h1>
             <div>
                 <input id="searchInputId" type="search" autofocus=true spellcheck=false size=66">
-                <button id="searchButtonId"type="button" onclick="doSearch();">Search</button>
+                <button id="searchButtonId" type="button" onclick="doSearch();">Search</button>
             </div>
             <textarea id="searchLogTextareaId" readonly></textarea>       
             <div id="addressDivId"></div>
@@ -26,8 +26,8 @@
         </div>
         <div id="slippyMapId"></div>
     </div>
+    <script src="https://unpkg.com/parse-nyc-address@0.4.0/dist/parse-nyc-address.min.js" integrity="sha512-I4ZuC8BW9Q34EWz9ji+RJaA/TrcJLzEfGlNoCiUP2afdyOpsWsdyhBjb0hm70NHMqM17ihf+jLP5nlESQ3xHsQ==" crossorigin=""></script>
     <div><table id="infoTableId"></table></div>
-    <script src="https://unpkg.com/parse-nyc-address@0.2.1/parse-nyc-address.min.js" integrity="sha512-FpgC8CVFv3gNhequgjvV0QvrDjZRKwYGCX8jQ0dftCVWHvSAJGn9v6wi3OTnB+d1MrZjYjJpShXWYJn337UVkA==" crossorigin=""></script>
     <script src="https://unpkg.com/leaflet@1.8.0/dist/leaflet.js" integrity="sha512-BB3hKbKWOc9Ez/TAwyWxNXeoV9c1v6FIeYiBieIWkpLjauysF18NzgR1MBNBXf8/KABdlkX68nAhlwcDFLGPCQ==" crossorigin=""></script>
     <script src="https://unpkg.com/leaflet-contextmenu@1.4.0/dist/leaflet.contextmenu.min.js" integrity="sha512-8sfQf8cr0KjCeN32YPfjvLU2cMvyY1lhCXTMfpTZ16CvwIzeVQtwtKlxeSqFs/TpXjKhp1Dcv77LQmn1VFaOZg==" crossorigin=""></script>
     <script src="app.js"></script>
