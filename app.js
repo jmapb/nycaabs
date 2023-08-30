@@ -1,6 +1,5 @@
 /* TODO -
 
- - Display "message" reply from API, if it exists
  - Add noscript message
  - Populate addressRangeList (not sure if this is worth doing without the full address range data from GOAT.)
  - Expand "Blvd" (maybe also "Blvd."?) before search ("213-03 NORTHERN blvd" gives wrong result)
@@ -47,6 +46,26 @@ function checkSearchKey(e) {
     }
 }
 
+async function doJsonFetch(name, fetchUrl) {
+    writeSearchLog('\r\n' + name + ' query ' + fetchUrl + '\r\n');
+    let responseJson = {};
+    try {
+        const response = await fetch(fetchUrl);
+        if (!response.ok) {
+            throw new Error("Fetch response was not OK");
+        }       
+        responseJson = await response.json();
+        ['code', 'message', 'description'].forEach(warning => {
+            if (typeof(responseJson[warning]) !== 'undefined') {
+                writeSearchLog(' - got ' + warning + ' = "' + responseJson[warning] + '"');
+            }
+        });       
+    } catch (e) {
+        writeSearchLog(' - ERROR ' + e.message ?? '' + ' ' + response?.status ?? '' + ' ' + response?.statusText ?? '');
+    }
+    return responseJson;
+}
+
 async function doSearch() {
     const searchText = searchInput.value.trim();
     searchInput.value = searchText;
@@ -55,6 +74,8 @@ async function doSearch() {
     markerLatLon = null;
     footprintJson = [];
     footprintDrawn = false;
+
+    document.getElementById('searchLogTextareaId').style.color = 'black';
 
     const reMatch = searchText.match(latlonRegex);
     if (reMatch !== null) {
@@ -84,235 +105,17 @@ async function doSearch() {
     }
 }
 
-async function doAddressSearch(searchText) {
-    /* For the address search, we'll use the NYC GeoSearch API (https://geosearch.planninglabs.nyc)
-    which parses freeform address search text and returns a list of the most likely matching
-    addresses with their associated BINs and other info.
-
-    It works well even with minimal input, eg "32 middagh" will return BIN 3001569 (32 MIDDAGH
-    STREET BROOKLYN) as the top ranked result without the need to specify "street" or "brooklyn" in
-    the search. This is unambiguous since there's only one road named Middagh in NYC, and only one
-    building on that road with housenumber 32.
-
-    A more ambiguous query, "32 cranberry", ranks 32 Cranberry Court in Staten Island first, and
-    then 32 Cranberry Street in Brooklyn. Nycaabs simply uses the top result, so if the Brooklyn
-    address is preferred, the search text can be made more explicit by adding "street" or "st".
-
-    Querying the API for "32 cranberry brooklyn" without the street suffix will still return the
-    Staten Island address first, however. This is new behavior in v2 of GeoSearch, which appears
-    to be much more reliant on the query containing a valid street suffix than v1 did. There are
-    definitely some upsides to the v2 API though. The old v1 would sometimes return unquestionably
-    incorrect results and, for certain addresses, would *never* rank the right result first no
-    matter how explicit the query text.
-
-    For NYC GeoSearch v1, Nycaabs had a multi-tier custom sort to deal with these edge cases. We
-    now use a much simpler sort that only compares the boro guessed from the parsed search text
-    to the boro of the returned properties. This enables us to search using eg "87 3rd av mn"
-    instead of need to spell out "87 3rd av manhattan"
-
-    1515 Park Place
-    Franklin Av BK
-
-    The API v2 is still very new and may have its own mysterious edge cases that need massaging.
-    Please raise a Github issue at https://github.com/jmapb/nycaabs/issues with examples of any
-    address searches that return the wrong property, thanks!
-
-    */
-
-    function boroMatchRank(resultBin, searchBoro) {
-        if (searchBoro === 0) {
-            return 200000;
+async function doFootprintLatlonSearch(lat, lon) {
+    markerLatLon = [lat, lon];
+    const latLonApiQuery = 'https://data.cityofnewyork.us/api/geospatial/7w4b-tj9d?lat=' + lat + '&lng=' + lon + '&zoom=17';
+    let fpJson = await doJsonFetch('"Building Footprints" latlon', latLonApiQuery);
+    if (fpJson.length > 0) {
+        const latlonBin = fpJson[0].bin;
+        if (validBin(latlonBin)) {
+            writeSearchLog(' - found BIN ' + latlonBin + ', attemping BIN search...\r\n');
+            writeBin(latlonBin);
+            await doBinSearch(latlonBin);
         }
-        if (resultBin.slice(0,1) === searchBoro.toString()) {
-            return 100000;
-        }
-        return 900000;
-    }
-
-    function streetMatchRank(resultStreet, searchStreet) {
-        if (searchStreet === '') {
-            return 40000;
-        }
-        if (searchStreet === resultStreet) {
-            return 10000;
-        }
-        if (resultStreet.includes(searchStreet)) {
-            return 20000;
-        }
-        if (searchStreet.includes(resultStreet)) {
-            return 30000;
-        }
-        return 90000;
-    }
-    
-/*  These previously-used sort rank functions don't seem to benefit the v2 results:
-    function suffixMatchRank(resultHousenumber, searchText) {
-
-        function suffixAlts(suffix) {
-            for (const a of [['A GAR', 'A GARAGE'],
-             ['AIR', 'AIR RGTS', 'AIR RIGHT', 'AIR RIGHTS'],
-             ['B GAR', 'B GARAGE'],
-             ['FRONT', 'FRT'],
-             ['FRONT A', 'FRT A'],
-             ['FRONT B', 'FRT B'],
-             ['GAR', 'GARAGE'],
-             ['INTER A', 'INT A'],
-             ['INTER B', 'INT B'],
-             ['UND', 'UNDER', 'UNDRGRND', 'UNDERGROUND']]) {
-                if (a.includes(suffix)) {
-                    return a;
-                }
-            }
-            return [suffix];
-        }
-
-        const reMatch = resultHousenumber.match(/[A-Z\s-]+$/);
-        if (reMatch === null) {
-            return 2000;
-        }
-        for (const s of suffixAlts(reMatch[0].trim())) {
-            if ((searchText + ' ').includes(s + ' ')) {
-                 return 1000;
-            }
-        }
-        return 9000;
-    }
-    */
-    
-    let parsedAddress = parseNycAddress(searchText);
-    writeSearchLog(' - parser "parse-nyc-address" found ' + JSON.stringify(parsedAddress));
-    let searchBoroNum = parsedAddress.borough ?? 0;
-    let searchStreet = parsedAddress.street ?? '';
-    
-    //To-do if parseNycAddress() gives us street and boro, attempt a Geoservice search (if we have a key cookie)
-    //If Geoservice fails us, fall back to NYC GeoSearch
- 
-    const nycGeosearchApiQuery = 'https://geosearch.planninglabs.nyc/v2/search?text=' + encodeURIComponent(searchText);
-    writeSearchLog('\r\n"NYC GeoSearch" API query ' + nycGeosearchApiQuery + '\r\n');
-    let response = await fetch(nycGeosearchApiQuery);
-    if (response.ok) {
-        let json = await response.json();
-        let parserDesc = ' - unspecified parser found ';
-        if (typeof json.geocoding.query.parser !== 'undefined') {
-            parserDesc = ' - parser "' + json.geocoding.query.parser + '" found ';
-        }
-        writeSearchLog(parserDesc + JSON.stringify(json.geocoding.query.parsed_text) + '\r\n');
-
-
-        
-//        if (typeof json.geocoding.query.parsed_text.admin !== 'undefined') {
-//            guessedBoroNum = guessBoroNum(json.geocoding.query.parsed_text.admin);
-//        }
-//        if (guessedBoroNum === 0) {
-//            writeSearchLog(' - search text does not appear to specify a boro\r\n');
-//        } else {
-//            writeSearchLog(' - search text appears to specify boro ' + guessedBoroNum + ' (' + boros[guessedBoroNum-1] + ')\r\n');
-//        }
-
-        if (json.features.length === 0) {
-            writeSearchLog(' - no NYC GeoSearch results');
-        } else {
-            if (json.features.length === 1) {
-                writeSearchLog(' - only one NYC GeoSearch result');
-            } else {
-                let upperSearch = searchText.toUpperCase();
-//                let upperStreet = '';
-//                if (typeof json.geocoding.query.parsed_text.street !== 'undefined') {
-//                    upperStreet = json.geocoding.query.parsed_text.street.toUpperCase();
-//                }
-                for (let i = 0; i < json.features.length; i++) {
-                    json.features[i].geosearch_rank = i;
-                    json.features[i].nycaabs_rank = boroMatchRank(json.features[i].properties.addendum.pad.bin, searchBoroNum) + streetMatchRank(json.features[i].properties.street, searchStreet); // + suffixMatchRank(json.features[i].properties.housenumber ?? '', upperSearch) + i;
-                }
-                json.features.sort(function(a, b) { return a.nycaabs_rank - b.nycaabs_rank; });
-                if (json.features[0].geosearch_rank === 0) {
-                    writeSearchLog(' - ' + json.features.length + ' NYC GeoSearch results, using result 0');
-                } else {
-                    writeSearchLog(' - ' + json.features.length + ' NYC GeoSearch results, using result ' + json.features[0].geosearch_rank + ' after custom sort');
-                }
-            }
-
-            let geosearchResult = json.features[0];
-            let bin = geosearchResult.properties.addendum.pad.bin ?? '';
-            let boroCode = bin.slice(0,1);
-            if (boroCode === searchBoroNum.toString()) {
-                writeSearchLog(', matches search boro\r\n');
-            } else {
-                writeSearchLog(', no boro match\r\n');
-            }
-            let houseNumber = geosearchResult.properties.housenumber ?? '';
-            let street = geosearchResult.properties.street ?? '';
-            let bbl = geosearchResult.properties.addendum.pad.bbl ?? '';
-            /* We also have geosearchResult.properties.borough but we don't need it since we're
-            setting the boro based on the first digit of the bin. If someday we want to show zip
-            codes, we can use geosearchResult.properties.postalcode but the quality of this field
-            is unknown.
-            */
-
-            /* BIG TODO -- At this point it would be great to take the address components (maybe as
-            returned in the parsed_text structure above, or failing that from the top search result,
-            or failing that parse the text ourselves) and feed them into a "Function1A" query on the
-            NYC Planning Geoservice API https://geoservice.planning.nyc.gov/, which has important
-            advantages over the NYC GeoSearch API:
-             - First, it returns address ranges for all streets of multi-street buildings. (NYC
-               GeoSearch only returns the address range on the queried street.)
-             - Second, it gives additional address classification info (See "Address Types" at
-               http://a030-goat.nyc.gov/goat/Glossary for documentation.)
-             - Third, it can find recently updated addresses and BINs by accessing the Transitional
-               PAD file (TPAD). NYC GeoSearch uses the standard PAD file, which is only updated
-               quarterly.
-
-            If we could get decent results from the NYC Planning Geoservice API, we probably
-            wouldn't even need to sort or further examine the NYC GeoSearch results. (Curse these
-            very similar names!) However, access to NYC Planning Geoservice requires registration
-            and department approval, and will only work with a city-issued private API key. This app
-            is currently being hosted on github.io, though, so keeping the API key private isn't
-            possible.
-
-            There's a web app wrapper around the NYC Planning Geoservice API called "GOAT",
-            http://a030-goat.nyc.gov/goat/. The GOAT app supports URL query parameters and is free
-            to use without credentials, but its cross-site scripting policy prevents us from screen-
-            scraping the results from our own web app. In theory we could attempt to work around
-            this with a CORS proxy but that's messy. (GOAT is also available as a downloadable
-            offline desktop app, but that version only uses the standard PAD file, not the TPAD
-            file.)
-
-            For now, we'll simply rely on the results from the NYC GeoSearch with the following
-            known limitations:
-             - Slightly out-of-date data (PAD only, not TPAD) that will not reflect newer
-               developments and may return obsolete or temporary BINs instead of current ones.
-             - Incomplete housenumber range info, especially for multi-street buildings.
-             - Need custom sort to downrank occasional results in the wrong borough, unsolicited
-               GARAGE or REAR results, etc, as described in the comment at this top of this
-               function.
-            */
-
-            writeSearchLog(' - showing address ' + houseNumber + ' ' + street + ', boro ' + boroCode + '\r\n');
-            writeAddress(houseNumber, street, boroCode);
-
-            const reMatch = bbl.match(bblRegex);
-            if (reMatch === null) {
-                writeSearchLog(' - not using invalid BBL ' + bbl + '\r\n');
-            } else {
-                writeSearchLog(' - showing BBL ' + bbl + '\r\n');
-                writeBbl(reMatch[1], reMatch[2], reMatch[3]);
-            }
-
-            if (validBin(bin)) {
-                writeSearchLog(' - showing BIN ' + bin + '\r\n');
-                writeBin(bin);
-                await doBinSearch(bin);
-            } else {
-                writeSearchLog(' - showing invalid BIN ' + bin + ', deeper search impossible without a valid BIN\r\n');
-                writeInvalidBin(bin);
-            }
-
-            if ((Array.isArray(geosearchResult.geometry.coordinates)) && (geosearchResult.geometry.coordinates[0] < -73) && (geosearchResult.geometry.coordinates[0] > 40)) {
-                markerLatLon = [geosearchResult.geometry.coordinates[1], geosearchResult.geometry.coordinates[0]];
-            }
-        }
-    } else {
-        writeSearchLog(' - error ' + response.status + ' "' + response.statusText + '"');
     }
 }
 
@@ -320,24 +123,6 @@ async function doBinSearch(bin) {
     await doFootprintBinSearch(bin);
     await doDobJobSearch(bin);
     await doDobNowSearch(bin);
-}
-
-async function doFootprintLatlonSearch(lat, lon) {
-    markerLatLon = [lat, lon];
-    const latLonApiQuery = 'https://data.cityofnewyork.us/api/geospatial/7w4b-tj9d?lat=' + lat + '&lng=' + lon + '&zoom=17';
-    writeSearchLog('\r\n"Building Footprints" API latlon query ' + latLonApiQuery + '\r\n');
-    let response = await fetch(latLonApiQuery);
-    if (response.ok) {
-        footprintJson = await response.json();
-        if (footprintJson.length > 0) {
-            const latlonBin = footprintJson[0].bin;
-            if (validBin(latlonBin)) {
-                writeSearchLog(' - found BIN ' + latlonBin + ', attemping BIN search...\r\n');
-                writeBin(latlonBin);
-                await doBinSearch(latlonBin)
-            }
-        }
-    }
 }
 
 async function doFootprintBinSearch(bin) {
@@ -355,99 +140,89 @@ async function doFootprintBinSearch(bin) {
             1005: 'Temporary',
             5110: 'Garage'
         };
-        const feature = featureCodes[featureCode];
-        if (typeof(feature) === 'undefined') {
-            return featureCode;
-        }
-        return feature;
+        return featureCodes[featureCode] ?? featureCode;
     }
 
     let row = infoTable.insertRow(-1);
     row.className = 'rowHead';
     row.innerHTML = '<td>Footprint</td><td>Yr Built</td><td>Status</td><td>Date</td><td>Height</td>';
 
-    /* Normally, we get NYC building footprint data by querying the API endpoint
-    https://data.cityofnewyork.us/resource/qb5r-6dgf.json (documented at
-    https://data.cityofnewyork.us/Housing-Development/Building-Footprints/nqwf-w8eh as the
-    "building" endpoint). The city also publishes https://data.cityofnewyork.us/resource/7w4b-tj9d.json
-    (documented as the "building_p" endpoint) containing single points for each building, instead of
-    footprint polygons. Sometimes, inexplicably, these two endpoints "switch place", so we need to 
-    query 7w4b-tj9d for footprints. 
-    As of 2023-08-23, the endpoints are in this switched state, so the code currently calls "building_p"
-    (7w4b-tj9d) instead of "building" (qb5r-6dgf). We'll need to update when (and if) the problem is
-    corrected. Todo -- a permanent fix that will automatically fall back on 7w4b-tj9d if qb5r-6dgf isn't
-    delivering footprints.
-    */
-    const footprintApiQuery = 'https://data.cityofnewyork.us/resource/7w4b-tj9d.json?bin=' + bin;
-    writeSearchLog('\r\n"Building Footprints" API BIN query ' + footprintApiQuery + '\r\n');
-    let response = await fetch(footprintApiQuery);
-    if (response.ok) {
-        footprintJson = await response.json();
-        if (footprintJson.length > 0) {
-            let needBbl = (bblDiv.innerHTML === '');
-            let heightInMeters = '';
-            let formattedHeight = '';
-            let footprintLinks = '';
-            if (footprintJson.length === 1) {
-                writeSearchLog(' - only one footprint result for this BIN\r\n');
-            } else {
-                writeSearchLog(' - ' + footprintJson.length + ' footprint results for this BIN\r\n');
-            }
-            /* Loop through footprint results, adding footprints to slippy map and crafting download
-            links. Theoretically we might want to reverse sort by status date, but I've never
-            actually seen more than one footprint result for a valid BIN. As of now, if the API did
-            return multiple footprints, they would all be listed in the table but only the first
-            result would be added to the map.
-            */
-            for (let i = 0; i < footprintJson.length; i++) {
-                //Take the BBL from this footprint record, if it's valid and needed
-                if (needBbl) {
-                    const bbl = footprintJson[i].base_bbl.trim();
-                    const reMatch = bbl.match(bblRegex);
-                    if (reMatch === null) {
-                        writeSearchLog(' - not using invalid BBL ' + bbl + '\r\n');
-                    } else {
-                        writeBbl(reMatch[1], reMatch[2], reMatch[3]);
-                        writeSearchLog(' - showing BBL ' + bbl + '\r\n');
-                        needBbl = false;
-                    }
-                }
+    const buildingFootprintApiQuery = 'https://data.cityofnewyork.us/resource/qb5r-6dgf.json?bin=' + bin;
+    footprintJson = await doJsonFetch('"Building Footprint" BIN', buildingFootprintApiQuery);
+    if ((footprintJson[0]?.the_geom?.type ?? '') !== 'MultiPolygon') {
+        /* Occasionally, the city's building footprints API (https://data.cityofnewyork.us/resource/qb5r-6dgf.json,
+        documented at https://data.cityofnewyork.us/Housing-Development/Building-Footprints/nqwf-w8eh as the
+        "building" endpoint) temporarily switches places with the building center points API
+        (https://data.cityofnewyork.us/resource/7w4b-tj9d.json, documented as the "building_p" endpoint). Not sure
+        what triggers this, but it happens enough that we need to automatically fall back on the "building_p" API
+        for footprint geometry if no multipolygon is found in the "building" query. (These datasets describe all
+        footprints as "MultiPolygon" even if they're just simple polygons.)
+        */
 
-                if (!footprintDrawn) {
-                    slippyMapAddFootprint(footprintJson[i].the_geom);
-                    footprintDrawn = true;
-                }
-
-                row = infoTable.insertRow(-1);
-                row.className = 'rowBg' + (i % 2);
-                if (typeof footprintJson[i].heightroof === 'undefined') {
-                    heightInMeters = '';
-                    formattedHeight = '?';
-                } else {
-                    heightInMeters = feetToMeters(footprintJson[i].heightroof);
-                    formattedHeight = formatHeight(footprintJson[i].heightroof, heightInMeters);
-                }
-
-                footprintLinks = '';
-                if (footprintJson[i].the_geom.type === 'MultiPolygon') {
-                    //Note that this dataset encodes *all* footprints as type 'MultiPolygon', even for simple footprints
-                    processFootprint(i, bin, heightInMeters);
-                    if (typeof(footprintJson[i]?.nycaabs_osm_xml) !== 'undefined') {
-                        footprintLinks = '<a href="data:text/xml;charset=utf-8,' + encodeURIComponent(footprintJson[i].nycaabs_osm_xml) + '" download="bin' + bin + '_footprint.osm">Download as .osm</a>  <a class="josmLink" href="#0" onclick="javascript:sendFootprintToJosm(' + i + ')">Send to JOSM</a>';
-                    }
-                    //Possibly consider a geojson download link as well -- iD users would be able to
-                    //load this, though it only works as an imagery layer, not importable data.
-                }
-
-                row.innerHTML = '<td>' + footprintFeatureText(footprintJson[i].feat_code) + '</td><td>' + (footprintJson[i].cnstrct_yr ?? '?') + '</td><td>' + footprintJson[i].lststatype + '</td><td>' + footprintJson[i].lstmoddate.slice(0,10) + '</td><td>' + formattedHeight + '</td><td class="tdLink">' + footprintLinks + '</td>';
-            }
+        const buildingPointApiQuery = 'https://data.cityofnewyork.us/resource/7w4b-tj9d.json?bin=' + bin;
+        footprintJson = await doJsonFetch('Did not get a footprint, trying "Building Point" BIN', buildingPointApiQuery);        
+    }
+    if (footprintJson.length > 0) {
+        let needBbl = (bblDiv.innerHTML === '');
+        let heightInMeters = '';
+        let formattedHeight = '';
+        let footprintLinks = '';
+        if (footprintJson.length === 1) {
+            writeSearchLog(' - only one footprint result for this BIN\r\n');
         } else {
-            writeSearchLog(' - no footprint results for this BIN\r\n');
+            writeSearchLog(' - ' + footprintJson.length + ' footprint results for this BIN\r\n');
+        }
+        /* Loop through footprint results, adding footprints to slippy map and crafting download
+        links. Theoretically we might want to reverse sort by status date, but I've never
+        actually seen more than one footprint result for a valid BIN. As of now, if the API did
+        return multiple footprints, they would all be listed in the table but only the first
+        result would be added to the map.
+        */
+        for (let i = 0; i < footprintJson.length; i++) {
+            //Take the BBL from this footprint record, if it's valid and needed
+            if (needBbl) {
+                const bbl = footprintJson[i].base_bbl.trim();
+                const reMatch = bbl.match(bblRegex);
+                if (reMatch === null) {
+                    writeSearchLog(' - not using invalid BBL ' + bbl + '\r\n');
+                } else {
+                    writeBbl(reMatch[1], reMatch[2], reMatch[3]);
+                    writeSearchLog(' - showing BBL ' + bbl + '\r\n');
+                    needBbl = false;
+                }
+            }
+
+            if (!footprintDrawn) {
+                slippyMapAddFootprint(footprintJson[i].the_geom);
+                footprintDrawn = true;
+            }
+
             row = infoTable.insertRow(-1);
-            row.innerHTML = '<td>none found</td>';
+            row.className = 'rowBg' + (i % 2);
+            if (typeof footprintJson[i].heightroof === 'undefined') {
+                heightInMeters = '';
+                formattedHeight = '?';
+            } else {
+                heightInMeters = feetToMeters(footprintJson[i].heightroof);
+                formattedHeight = formatHeight(footprintJson[i].heightroof, heightInMeters);
+            }
+
+            footprintLinks = '';
+            if (footprintJson[i].the_geom.type === 'MultiPolygon') {
+                processFootprint(i, bin, heightInMeters);
+                if (typeof(footprintJson[i]?.nycaabs_osm_xml) !== 'undefined') {
+                    footprintLinks = '<a href="data:text/xml;charset=utf-8,' + encodeURIComponent(footprintJson[i].nycaabs_osm_xml) + '" download="bin' + bin + '_footprint.osm">Download as .osm</a>  <a class="josmLink" href="#0" onclick="javascript:sendFootprintToJosm(' + i + ')">Send to JOSM</a>';
+                }
+                //Possibly consider a geojson download link as well -- iD users would be able to
+                //load this, though it only works as an imagery layer, not importable data.
+            }
+
+            row.innerHTML = '<td>' + footprintFeatureText(footprintJson[i].feat_code) + '</td><td>' + (footprintJson[i].cnstrct_yr ?? '?') + '</td><td>' + footprintJson[i].lststatype + '</td><td>' + footprintJson[i].lstmoddate.slice(0,10) + '</td><td>' + formattedHeight + '</td><td class="tdLink">' + footprintLinks + '</td>';
         }
     } else {
-        writeSearchLog(' - error ' + response.status + ' "' + response.statusText + '"');
+        writeSearchLog(' - no footprint results for this BIN\r\n');
+        row = infoTable.insertRow(-1);
+        row.innerHTML = '<td>none found</td>';
     }
 }
 
@@ -529,79 +304,72 @@ async function doDobJobSearch(bin) {
     row.className = 'rowHead';
     row.innerHTML = '<td>DOB Job</td><td>Type</td><td>Status</td><td>Date</td><td>Height</td><td class="tdLink"><a href="' + constructUrlBisJobs(bin) + '">Job&nbsp;List&nbsp;@&nbsp;BIS</a> <a href="' + constructUrlBisJobs(bin, 'A') + '">Active&nbsp;Zoning&nbsp;Job&nbsp;@&nbsp;BIS</a></td>';
     let dobJobApiQuery = 'https://data.cityofnewyork.us/resource/ic3t-wcy2.json?$select=distinct%20job__,house__,street_name,borough,block,lot,job_type,job_status,latest_action_date,proposed_height,gis_latitude,gis_longitude&$where=bin__=%27' + bin + '%27';
-    //Note: previously I was also requesting the "job_s1_no" field, and using it to populate the "allisn" url parameter of the BIS Zoning Documents page urls, imitating the urls generated by the BIS app. I've concluded that this field isn't neccessary (the Zoning Documents page seems to load just as well without it) so I'm no longer requesting or using it.
-    writeSearchLog('\r\n"DOB Job Application Filings" API query ' + dobJobApiQuery + '\r\n');
-    let response = await fetch(dobJobApiQuery);
-    if (response.ok) {
-        let json = await response.json();
-        let j = json.length;
-        if (j > 0) {
-            let needAddress = (addressDiv.innerHTML === '');
-            let houseNumber = '';
-            let street = '';
-            let boroCode = bin.slice(0,1);
-            let needBbl = (bblDiv.innerHTML === '');
-            let jobLot = '';
-            let jobBlock = '';
-            if (j === 1) {
-                writeSearchLog(' - only one DOB Job Application result for this BIN\r\n');
-            } else if (j > maxResults) {
-                writeSearchLog(' - ' + j + ' DOB Job Application results for this BIN, only showing the top ' + maxResults + '\r\n');
-                j = maxResults;
-            } else {
-                writeSearchLog(' - ' + j + ' DOB Job Application results for this BIN\r\n');
-            }
-            json.sort(function(a, b) { return dobJobSortRank(b.job_type, b.latest_action_date, b.proposed_height) - dobJobSortRank(a.job_type, a.latest_action_date, a.proposed_height); });
-            const listedJobsWithHeight = [];
-            let addedRowCount = 0;
-            for (let i = 0; i < j; i++) {
-
-                if (needAddress) {
-                    houseNumber = json[i].house__ ?? '';
-                    street = json[i].street_name ?? '';
-                    if (houseNumber !== '' && street !== '') {
-                        writeSearchLog(' - showing address ' + houseNumber + ' ' + street + ', boro ' + boroCode + '\r\n');
-                        writeAddress(houseNumber, street, boroCode);
-                        needAddress = false;
-                    }
-                }
-
-                if (needBbl) {
-                    jobBlock = json[i].block.trim();
-                    jobLot = json[i].lot.trim();
-                    if (jobBlock !== '' && jobLot !== '') {
-                        writeBbl(boroCode, json[i].block, json[i].lot);
-                        writeSearchLog(' - showing BBL ' + boroCode + json[i].block + json[i].lot + ' from result ' + i + '\r\n');
-                        needBbl = false;
-                    }
-                }
-
-                if (markerLatLon === null) {
-                    if ((json[i].gis_latitude > 40) && (json[i].gis_longitude < -73)) {
-                        markerLatLon = [json[i].gis_latitude, json[i].gis_longitude];
-                        writeSearchLog(' - got latlon ' + json[i].gis_latitude + ', ' +  json[i].gis_longitude + ' from result ' + i + '\r\n');
-                    }
-                }
-
-                if (!listedJobsWithHeight.includes(json[i].job__)) {
-                    row = infoTable.insertRow(-1);
-                    row.className = 'rowBg' + (addedRowCount % 2);
-                    row.innerHTML = '<td>' + json[i].job__ + '</td><td><abbr title="' + expandJobType(json[i].job_type) + '">' + json[i].job_type + '<abbr></td><td><abbr title="' + expandJobStatus(json[i].job_status) + '">' + json[i].job_status + '<abbr></td><td>' + formatDate(json[i].latest_action_date) + '</td><td>' + formatHeight(json[i].proposed_height) + '</td><td class="tdLink"><a href="https://a810-bisweb.nyc.gov/bisweb/JobsQueryByNumberServlet?passjobnumber=' + json[i].job__ + '&passdocnumber=01">Job&nbsp;Details&nbsp;@&nbsp;BIS</a> <a href="https://a810-bisweb.nyc.gov/bisweb/JobsZoningDocumentsServlet?passjobnumber=' + json[i].job__ + '&passdocnumber=01&allbin=' + bin + '">Zoning&nbsp;Documents&nbsp;@&nbsp;BIS</a></td>';
-                    addedRowCount++;
-                    if (json[i].proposed_height > 0) {
-                        listedJobsWithHeight.push(json[i].job__);
-                    }
-                }
-            }
+    //Note: previously I was also requesting the "job_s1_no" field, and using it to populate the "allisn" url parameter of the BIS Zoning Documents page urls, imitating the urls generated by the BIS web portal. I've concluded that this field isn't neccessary (the Zoning Documents page seems to load just as well without it) so I'm no longer requesting or using it.
+    
+    let json = await doJsonFetch('"DOB Job Application Filings"', dobJobApiQuery);
+    let j = json?.length ?? 0;
+    if (j > 0) {
+        let needAddress = (addressDiv.innerHTML === '');
+        let houseNumber = '';
+        let street = '';
+        let boroCode = bin.slice(0,1);
+        let needBbl = (bblDiv.innerHTML === '');
+        let jobLot = '';
+        let jobBlock = '';
+        if (j === 1) {
+            writeSearchLog(' - only one DOB Job Application result for this BIN\r\n');
+        } else if (j > maxResults) {
+            writeSearchLog(' - ' + j + ' DOB Job Application results for this BIN, only showing the top ' + maxResults + '\r\n');
+            j = maxResults;
         } else {
-            writeSearchLog(' - no DOB Job Application results for this BIN\r\n');
-            row = infoTable.insertRow(-1);
-            row.innerHTML = '<td>none found</td>';
+            writeSearchLog(' - ' + j + ' DOB Job Application results for this BIN\r\n');
+        }
+        json.sort(function(a, b) { return dobJobSortRank(b.job_type, b.latest_action_date, b.proposed_height) - dobJobSortRank(a.job_type, a.latest_action_date, a.proposed_height); });
+        const listedJobsWithHeight = [];
+        let addedRowCount = 0;
+        for (let i = 0; i < j; i++) {
+
+            if (needAddress) {
+                houseNumber = json[i].house__ ?? '';
+                street = json[i].street_name ?? '';
+                if (houseNumber !== '' && street !== '') {
+                    writeSearchLog(' - showing address ' + houseNumber + ' ' + street + ', boro ' + boroCode + '\r\n');
+                    writeAddress(houseNumber, street, boroCode);
+                    needAddress = false;
+                }
+            }
+
+            if (needBbl) {
+                jobBlock = json[i].block.trim();
+                jobLot = json[i].lot.trim();
+                if (jobBlock !== '' && jobLot !== '') {
+                    writeBbl(boroCode, json[i].block, json[i].lot);
+                    writeSearchLog(' - showing BBL ' + boroCode + json[i].block + json[i].lot + ' from result ' + i + '\r\n');
+                    needBbl = false;
+                }
+            }
+
+            if (markerLatLon === null) {
+                if ((json[i].gis_latitude > 40) && (json[i].gis_longitude < -73)) {
+                    markerLatLon = [json[i].gis_latitude, json[i].gis_longitude];
+                    writeSearchLog(' - got latlon ' + json[i].gis_latitude + ', ' +  json[i].gis_longitude + ' from result ' + i + '\r\n');
+                }
+            }
+
+            if (!listedJobsWithHeight.includes(json[i].job__)) {
+                row = infoTable.insertRow(-1);
+                row.className = 'rowBg' + (addedRowCount % 2);
+                row.innerHTML = '<td>' + json[i].job__ + '</td><td><abbr title="' + expandJobType(json[i].job_type) + '">' + json[i].job_type + '<abbr></td><td><abbr title="' + expandJobStatus(json[i].job_status) + '">' + json[i].job_status + '<abbr></td><td>' + formatDate(json[i].latest_action_date) + '</td><td>' + formatHeight(json[i].proposed_height) + '</td><td class="tdLink"><a href="https://a810-bisweb.nyc.gov/bisweb/JobsQueryByNumberServlet?passjobnumber=' + json[i].job__ + '&passdocnumber=01">Job&nbsp;Details&nbsp;@&nbsp;BIS</a> <a href="https://a810-bisweb.nyc.gov/bisweb/JobsZoningDocumentsServlet?passjobnumber=' + json[i].job__ + '&passdocnumber=01&allbin=' + bin + '">Zoning&nbsp;Documents&nbsp;@&nbsp;BIS</a></td>';
+                addedRowCount++;
+                if (json[i].proposed_height > 0) {
+                    listedJobsWithHeight.push(json[i].job__);
+                }
+            }
         }
     } else {
-        writeSearchLog(' - error ' + response.status + ' "' + response.statusText + '"');
+        writeSearchLog(' - no DOB Job Application results for this BIN\r\n');
         row = infoTable.insertRow(-1);
-        row.innerHTML = '<td>search error</td>';
+        row.innerHTML = '<td>none found</td>';
     }
 }
 
@@ -620,77 +388,248 @@ async function doDobNowSearch(bin) {
     row.className = 'rowHead';
     row.innerHTML = '<td>DOB NOW Job</td><td>Type</td><td>Status</td><td>Date</td><td>Height</td>';
     let dobNowJobApiQuery = 'https://data.cityofnewyork.us/resource/w9ak-ipjd.json?$select=distinct%20job_filing_number,house_no,street_name,borough,block,lot,job_type,filing_status,current_status_date,proposed_height,latitude,longitude&$where=bin=%27' + bin + '%27&$order=current_status_date'; //may eventually want to request latlon in this query, in case we don't have it from elsewhere
-    writeSearchLog('\r\n"DOB NOW: Build – Job Application Filings" API query ' + dobNowJobApiQuery + '\r\n');
-    let response = await fetch(dobNowJobApiQuery);
-    if (response.ok) {
-        let json = await response.json();
-        if (json.length > 0) {
-            if (json.length === 1) {
-                writeSearchLog(' - only one DOB NOW Job result for this BIN\r\n');
-            } else {
-                writeSearchLog(' - ' + json.length + ' DOB NOW Job results for this BIN\r\n');
-            }
-            let j = json.length - 1;
-            let needAddress = (addressDiv.innerHTML === '');
-            let houseNumber = '';
-            let street = '';
-            let boroCode = bin.slice(0,1);
-            let needBbl = (bblDiv.innerHTML === '');
-            let jobLot = '';
-            let jobBlock = '';
-            let currentStatusDate = '';
-
-            /* I don't have a particular goal with the sort order in the DOB NOW portion of the table, so I'll just show the newest jobs on top. The date is in a sortable format but the API can't do a descending sort, so this loop processes the rows in reverse order. */
-            for (let i=0; i <= j; i++) {
-
-                if (needAddress) {
-                    houseNumber = json[j-i].house_no ?? '';
-                    street = json[j-i].street_name ?? '';
-                    if (houseNumber !== '' && street !== '') {
-                        writeSearchLog(' - showing address ' + houseNumber + ' ' + street + ', boro ' + boroCode + '\r\n');
-                        writeAddress(houseNumber, street, boroCode);
-                        needAddress = false;
-                    }
-                }
-
-                if (needBbl) {
-                    jobBlock = json[j-i].block ?? '';
-                    jobLot = json[j-i].lot ?? '';
-                    if (jobBlock !== '' && jobLot !== '') {
-                        jobBlock = jobBlock.padStart(5, '0');
-                        jobLot = jobLot.padStart(5, '0');
-                        writeBbl(boroCode, jobBlock, jobLot);
-                        writeSearchLog(' - showing BBL ' + boroCode + jobBlock + jobLot + ' from result ' + (j-i) + '\r\n');
-                        needBbl = false;
-                    }
-                }
-
-                if (markerLatLon === null) {
-                    if ((json[j-i].latitude > 40) && (json[j-i].longitude < -73)) {
-                        markerLatLon = [json[j-i].latitude, json[j-i].longitude];
-                        writeSearchLog(' - got latlon ' + json[j-i].latitude + ', ' +  json[j-i].longitude + ' from result ' + i + '\r\n');
-                    }
-                }
-
-                row = infoTable.insertRow(-1);
-                row.className = 'rowBg' + (i % 2);
-                if (typeof(json[j-i].current_status_date) === 'undefined') {
-                    currentStatusDate = '?';
-                } else {
-                    currentStatusDate = json[j-i].current_status_date.slice(0,10);
-                }
-
-                row.innerHTML = '<td>' + json[j-i].job_filing_number + '</td><td>' + json[j-i].job_type + '</td><td>' + shortenDobNowStatus(json[j-i].filing_status) + '</td><td>' + currentStatusDate + '</td><td>' + formatHeight(json[j-i].proposed_height) + '</td>';
-            }
+    let json = await doJsonFetch('"DOB NOW: Build – Job Application Filings"', dobNowJobApiQuery);
+    if (json.length > 0) {
+        if (json.length === 1) {
+            writeSearchLog(' - only one DOB NOW Job result for this BIN\r\n');
         } else {
-            writeSearchLog(' - no DOB NOW Job results for this BIN\r\n');
+            writeSearchLog(' - ' + json.length + ' DOB NOW Job results for this BIN\r\n');
+        }
+        let j = json.length - 1;
+        let needAddress = (addressDiv.innerHTML === '');
+        let houseNumber = '';
+        let street = '';
+        let boroCode = bin.slice(0,1);
+        let needBbl = (bblDiv.innerHTML === '');
+        let jobLot = '';
+        let jobBlock = '';
+        let currentStatusDate = '';
+
+        /* I don't have a particular goal with the sort order in the DOB NOW portion of the table, so I'll just show the newest jobs on top. The date is in a sortable format but the API can't do a descending sort, so this loop processes the rows in reverse order. */
+        for (let i=0; i <= j; i++) {
+
+            if (needAddress) {
+                houseNumber = json[j-i].house_no ?? '';
+                street = json[j-i].street_name ?? '';
+                if (houseNumber !== '' && street !== '') {
+                    writeSearchLog(' - showing address ' + houseNumber + ' ' + street + ', boro ' + boroCode + '\r\n');
+                    writeAddress(houseNumber, street, boroCode);
+                    needAddress = false;
+                }
+            }
+
+            if (needBbl) {
+                jobBlock = json[j-i].block ?? '';
+                jobLot = json[j-i].lot ?? '';
+                if (jobBlock !== '' && jobLot !== '') {
+                    jobBlock = jobBlock.padStart(5, '0');
+                    jobLot = jobLot.padStart(5, '0');
+                    writeBbl(boroCode, jobBlock, jobLot);
+                    writeSearchLog(' - showing BBL ' + boroCode + jobBlock + jobLot + ' from result ' + (j-i) + '\r\n');
+                    needBbl = false;
+                }
+            }
+
+            if (markerLatLon === null) {
+                if ((json[j-i].latitude > 40) && (json[j-i].longitude < -73)) {
+                    markerLatLon = [json[j-i].latitude, json[j-i].longitude];
+                    writeSearchLog(' - got latlon ' + json[j-i].latitude + ', ' +  json[j-i].longitude + ' from result ' + i + '\r\n');
+                }
+            }
+
             row = infoTable.insertRow(-1);
-            row.innerHTML = '<td>none found</td>';
+            row.className = 'rowBg' + (i % 2);
+            if (typeof(json[j-i].current_status_date) === 'undefined') {
+                currentStatusDate = '?';
+            } else {
+                currentStatusDate = json[j-i].current_status_date.slice(0,10);
+            }
+
+            row.innerHTML = '<td>' + json[j-i].job_filing_number + '</td><td>' + json[j-i].job_type + '</td><td>' + shortenDobNowStatus(json[j-i].filing_status) + '</td><td>' + currentStatusDate + '</td><td>' + formatHeight(json[j-i].proposed_height) + '</td>';
         }
     } else {
-        writeSearchLog(' - error ' + response.status + ' "' + response.statusText + '"');
+        writeSearchLog(' - no DOB NOW Job results for this BIN\r\n');
         row = infoTable.insertRow(-1);
-        row.innerHTML = '<td>search error</td>';
+        row.innerHTML = '<td>none found</td>';
+    }
+}
+
+async function doAddressSearch(searchText) {
+    /* For the address search, we'll use the NYC GeoSearch API (https://geosearch.planninglabs.nyc)
+    which parses freeform address search text and returns a list of the most likely matching
+    addresses with their associated BINs and other info.
+
+    It works well even with minimal input, eg "32 middagh" will return BIN 3001569 (32 MIDDAGH
+    STREET BROOKLYN) as the top ranked result without the need to specify "street" or "brooklyn" in
+    the search. This is unambiguous since there's only one road named Middagh in NYC, and only one
+    building on that road with housenumber 32.
+
+    A more ambiguous query, "32 cranberry", ranks 32 Cranberry Court in Staten Island first, and
+    then 32 Cranberry Street in Brooklyn. Nycaabs simply uses the top result, so if the Brooklyn
+    address is preferred, the search text can be made more explicit by adding "street" or "st".
+
+    Querying the API for "32 cranberry brooklyn" without the street suffix will still return the
+    Staten Island address first, however. This is new behavior in v2 of GeoSearch, which appears
+    to be much more reliant on the query containing a valid street suffix than v1 did. There are
+    definitely some upsides to the v2 API though. The old v1 would sometimes return unquestionably
+    incorrect results and, for certain addresses, would *never* rank the right result first no
+    matter how explicit the query text.
+
+    For NYC GeoSearch v1, Nycaabs had a multi-tier custom sort to deal with these edge cases. We
+    now use a much simpler sort that only compares the boro guessed from the parsed search text
+    to the boro of the returned properties. This enables us to search using eg "87 3rd av mn"
+    instead of need to spell out "87 3rd av manhattan"
+
+    1515 Park Place
+    Franklin Av BK
+
+    The API v2 is still very new and may have its own mysterious edge cases that need massaging.
+    Please raise a Github issue at https://github.com/jmapb/nycaabs/issues with examples of any
+    address searches that return the wrong property, thanks!
+
+    */
+
+    function boroMatchRank(resultBin, searchBoro) {
+        if (searchBoro === 0) {
+            return 200000;
+        }
+        if (resultBin.slice(0,1) === searchBoro.toString()) {
+            return 100000;
+        }
+        return 900000;
+    }
+
+    function streetMatchRank(resultStreet, searchStreet) {
+        if (searchStreet === '') {
+            return 40000;
+        }
+        if (searchStreet === resultStreet) {
+            return 10000;
+        }
+        if (resultStreet.includes(searchStreet)) {
+            return 20000;
+        }
+        if (searchStreet.includes(resultStreet)) {
+            return 30000;
+        }
+        return 90000;
+    }
+        
+    let parsedAddress = parseNycAddress(searchText);
+    writeSearchLog(' - parser "parse-nyc-address" found ' + JSON.stringify(parsedAddress));
+    let searchBoroNum = parsedAddress.borough ?? 0;
+    let searchStreet = parsedAddress.street ?? '';
+    
+    //To-do if parseNycAddress() gives us street and boro, attempt a Geoservice search (if we have a key cookie)
+    //If Geoservice fails us, fall back to NYC GeoSearch
+ 
+    const nycGeosearchApiQuery = 'https://geosearch.planninglabs.nyc/v2/search?text=' + encodeURIComponent(searchText);
+    let parserDesc = ' - unspecified parser found ';
+    let json = await doJsonFetch('"NYC GeoSearch"', nycGeosearchApiQuery);
+    if (typeof json?.geocoding?.query?.parser !== 'undefined') {
+        parserDesc = ' - parser "' + json.geocoding.query.parser + '" found ';
+    }
+    writeSearchLog(parserDesc + JSON.stringify(json?.geocoding?.query?.parsed_text ?? {}) + '\r\n');
+    let geosearchResults = json?.features ?? [];
+    if (geosearchResults.length === 0) {
+        writeSearchLog(' - no NYC GeoSearch results');
+    } else {
+        if (geosearchResults.length === 1) {
+            writeSearchLog(' - only one NYC GeoSearch result');
+            document.getElementById('searchLogTextareaId').style.color = 'blue';
+        } else {
+            let upperSearch = searchText.toUpperCase();
+            for (let i = 0; i < geosearchResults.length; i++) {
+                geosearchResults[i].geosearch_rank = i;
+                geosearchResults[i].nycaabs_rank = boroMatchRank(geosearchResults[i].properties.addendum.pad.bin, searchBoroNum) + streetMatchRank(geosearchResults[i].properties.street, searchStreet);
+            }
+            json.features.sort(function(a, b) { return a.nycaabs_rank - b.nycaabs_rank; });
+            if (geosearchResults[0].geosearch_rank === 0) {
+                writeSearchLog(' - ' + geosearchResults.length + ' NYC GeoSearch results, using result 0');
+            } else {
+                writeSearchLog(' - ' + geosearchResults.length + ' NYC GeoSearch results, using result ' + geosearchResults[0].geosearch_rank + ' after custom sort');
+                document.getElementById('searchLogTextareaId').style.color = 'red';
+            }
+        }
+
+//        let geosearchResult = geosearchResults[0];
+        let bin = geosearchResults[0]?.properties?.addendum?.pad?.bin ?? '';
+        let boroCode = bin.slice(0,1);
+        if (boroCode === searchBoroNum.toString()) {
+            writeSearchLog(', matches search boro\r\n');
+        } else {
+            writeSearchLog(', no boro match\r\n');
+        }
+        let houseNumber = geosearchResults[0]?.properties?.housenumber ?? '';
+        let street = geosearchResults[0]?.properties?.street ?? '';
+        let bbl = geosearchResults[0]?.properties?.addendum?.pad?.bbl ?? '';
+        /* We also have geosearchResult.properties.borough but we don't need it since we're
+        setting the boro based on the first digit of the bin. If someday we want to show zip
+        codes, we can use geosearchResult.properties.postalcode but the quality of this field
+        is unknown.
+        */
+
+        /* BIG TODO -- At this point it would be great to take the address components (maybe as
+        returned in the parsed_text structure above, or failing that from the top search result,
+        or failing that parse the text ourselves) and feed them into a "Function1A" query on the
+        NYC Planning Geoservice API https://geoservice.planning.nyc.gov/, which has important
+        advantages over the NYC GeoSearch API:
+         - First, it returns address ranges for all streets of multi-street buildings. (NYC
+           GeoSearch only returns the address range on the queried street.)
+         - Second, it gives additional address classification info (See "Address Types" at
+           http://a030-goat.nyc.gov/goat/Glossary for documentation.)
+         - Third, it can find recently updated addresses and BINs by accessing the Transitional
+           PAD file (TPAD). NYC GeoSearch uses the standard PAD file, which is only updated
+           quarterly.
+
+        If we could get decent results from the NYC Planning Geoservice API, we probably
+        wouldn't even need to sort or further examine the NYC GeoSearch results. (Curse these
+        very similar names!) However, access to NYC Planning Geoservice requires registration
+        and department approval, and will only work with a city-issued private API key. This app
+        is currently being hosted on github.io, though, so keeping the API key private isn't
+        possible.
+
+        There's a web app wrapper around the NYC Planning Geoservice API called "GOAT",
+        http://a030-goat.nyc.gov/goat/. The GOAT app supports URL query parameters and is free
+        to use without credentials, but its cross-site scripting policy prevents us from screen-
+        scraping the results from our own web app. In theory we could attempt to work around
+        this with a CORS proxy but that's messy. (GOAT is also available as a downloadable
+        offline desktop app, but that version only uses the standard PAD file, not the TPAD
+        file.)
+
+        For now, we'll simply rely on the results from the NYC GeoSearch with the following
+        known limitations:
+         - Slightly out-of-date data (PAD only, not TPAD) that will not reflect newer
+           developments and may return obsolete or temporary BINs instead of current ones.
+         - Incomplete housenumber range info, especially for multi-street buildings.
+         - Need custom sort to favor results that match the requested borough and street name, as
+           described in the comment at this top of this function.
+        */
+
+        writeSearchLog(' - showing address ' + houseNumber + ' ' + street + ', boro ' + boroCode + '\r\n');
+        writeAddress(houseNumber, street, boroCode);
+
+        const reMatch = bbl.match(bblRegex);
+        if (reMatch === null) {
+            writeSearchLog(' - not using invalid BBL ' + bbl + '\r\n');
+        } else {
+            writeSearchLog(' - showing BBL ' + bbl + '\r\n');
+            writeBbl(reMatch[1], reMatch[2], reMatch[3]);
+        }
+
+        if (validBin(bin)) {
+            writeSearchLog(' - showing BIN ' + bin + '\r\n');
+            writeBin(bin);
+            await doBinSearch(bin);
+        } else {
+            writeSearchLog(' - showing invalid BIN ' + bin + ', deeper search impossible without a valid BIN\r\n');
+            writeInvalidBin(bin);
+        }
+
+        if ((Array.isArray(geosearchResults[0]?.geometry?.coordinates)) && ((geosearchResults[0]?.geometry?.coordinates[1] ?? 0) < -73) && ((geosearchResults[0]?.geometry?.coordinates[0] ?? 0) > 40)) {
+            markerLatLon = [geosearchResult.geometry.coordinates[1], geosearchResult.geometry.coordinates[0]];
+            writeSearchLog(' - got latlon ' + markerLatLon[0] + ', ' +  markerLatLon[0] + ' from Geosearch\r\n');
+        }
     }
 }
 
