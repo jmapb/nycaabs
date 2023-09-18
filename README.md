@@ -17,4 +17,4 @@ The Github main branch is hosted at https://jmapb.github.io/nycaabs/. Nycaabs ca
  * **OpenStreetMap Carto** raster map tiles (https://wiki.openstreetmap.org/wiki/OpenStreetMap_Carto)
  * **Leaflet** interactive map library (https://leafletjs.com, using version 1.8.0 via unpkg.com)
  * **Leaflet.contextmenu** library (https://github.com/aratcliffe/Leaflet.contextmenu, using version 1.4.0 via unpkg.com)
- * **Parse-nyc-address** street address parser (https://github.com/jmapb/parse-nyc-address, using version 0.2.1 via unpkg.com)
+ * **Parse-nyc-address** street address parser (https://github.com/jmapb/parse-nyc-address, using version 0.5.2 via unpkg.com)
