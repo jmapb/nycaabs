@@ -4,11 +4,12 @@
  - Populate addressRangeList (not sure if this is worth doing without the full address range data from GOAT.)
  - Expand "Blvd" (maybe also "Blvd."?) before search ("213-03 NORTHERN blvd" gives wrong result)
  - Query for HPD ID & link to HPD portal
+ - 855 Clarkson Brooklyn
  
  "1745 Forest Avenue, Staten Island, New York 10302" vs "1745 Forest Avenue"??????
  
  
- BIN 3428826 -- example where DOB has correct building height, height listed with footprint is much higher
+ BIN 3428826, 3337899  -- examples where DOB has correct building height, height listed with footprint is much higher
 
 */
 
@@ -20,7 +21,7 @@ const bblDiv = document.getElementById('bblDivId');
 const addressRangeList = document.getElementById('addressRangeListId');
 const infoTable = document.getElementById('infoTableId');
 const bblRegex = /^([1-5])([0-9]{5})([0-9]{4})$/;
-const latlonRegex = /^\s*([0-9\-\.]+)[\s,;]+([0-9\-\.]+)\s*$/;
+const latlonRegex = /^\s*([0-9\.]+)[\s,;]+(\-[0-9\.]+)\s*$/;
 const boros = ['Manhattan', 'Bronx', 'Brooklyn', 'Queens', 'Staten Island'];
 var slippyMap = null;
 var markerLatLon = null;
@@ -75,7 +76,7 @@ async function doSearch() {
     footprintJson = [];
     footprintDrawn = false;
 
-    document.getElementById('searchLogTextareaId').style.color = 'black';
+    //document.getElementById('searchLogTextareaId').style.color = 'black';
 
     const reMatch = searchText.match(latlonRegex);
     if (reMatch !== null) {
@@ -107,7 +108,9 @@ async function doSearch() {
 
 async function doFootprintLatlonSearch(lat, lon) {
     markerLatLon = [lat, lon];
-    const latLonApiQuery = 'https://data.cityofnewyork.us/api/geospatial/7w4b-tj9d?lat=' + lat + '&lng=' + lon + '&zoom=17';
+    
+//    const latLonApiQuery = 'https://data.cityofnewyork.us/api/geospatial/7w4b-tj9d?lat=' + lat + '&lng=' + lon + '&zoom=17';
+    const latLonApiQuery = 'https://data.cityofnewyork.us/api/geospatial/qb5r-6dgf?lat=' + lat + '&lng=' + lon + '&zoom=17';
     let fpJson = await doJsonFetch('"Building Footprints" latlon', latLonApiQuery);
     if (fpJson.length > 0) {
         const latlonBin = fpJson[0].bin;
@@ -158,7 +161,6 @@ async function doFootprintBinSearch(bin) {
         for footprint geometry if no multipolygon is found in the "building" query. (These datasets describe all
         footprints as "MultiPolygon" even if they're just simple polygons.)
         */
-
         const buildingPointApiQuery = 'https://data.cityofnewyork.us/resource/7w4b-tj9d.json?bin=' + bin;
         footprintJson = await doJsonFetch('Did not get a footprint, trying "Building Point" BIN', buildingPointApiQuery);        
     }
@@ -536,7 +538,7 @@ async function doAddressSearch(searchText) {
     } else {
         if (geosearchResults.length === 1) {
             writeSearchLog(' - only one NYC GeoSearch result');
-            document.getElementById('searchLogTextareaId').style.color = 'blue';
+            //document.getElementById('searchLogTextareaId').style.color = 'blue';
         } else {
             let upperSearch = searchText.toUpperCase();
             for (let i = 0; i < geosearchResults.length; i++) {
@@ -548,11 +550,10 @@ async function doAddressSearch(searchText) {
                 writeSearchLog(' - ' + geosearchResults.length + ' NYC GeoSearch results, using result 0');
             } else {
                 writeSearchLog(' - ' + geosearchResults.length + ' NYC GeoSearch results, using result ' + geosearchResults[0].geosearch_rank + ' after custom sort');
-                document.getElementById('searchLogTextareaId').style.color = 'red';
+                //document.getElementById('searchLogTextareaId').style.color = 'red';
             }
         }
 
-//        let geosearchResult = geosearchResults[0];
         let bin = geosearchResults[0]?.properties?.addendum?.pad?.bin ?? '';
         let boroCode = bin.slice(0,1);
         if (boroCode === searchBoroNum.toString()) {
@@ -627,7 +628,7 @@ async function doAddressSearch(searchText) {
         }
 
         if ((Array.isArray(geosearchResults[0]?.geometry?.coordinates)) && ((geosearchResults[0]?.geometry?.coordinates[1] ?? 0) < -73) && ((geosearchResults[0]?.geometry?.coordinates[0] ?? 0) > 40)) {
-            markerLatLon = [geosearchResult.geometry.coordinates[1], geosearchResult.geometry.coordinates[0]];
+            markerLatLon = [geosearchResults[0].geometry.coordinates[1], geosearchResults[0].geometry.coordinates[0]];
             writeSearchLog(' - got latlon ' + markerLatLon[0] + ', ' +  markerLatLon[0] + ' from Geosearch\r\n');
         }
     }
