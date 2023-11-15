@@ -5,15 +5,16 @@
  - Expand "Blvd" (maybe also "Blvd."?) before search ("213-03 NORTHERN blvd" gives wrong result)
  - Query for HPD ID & link to HPD portal
  - 855 Clarkson Brooklyn
+ -         ***** TODO -- non-rejected plan should be sorted above rejected plan, see BIN 3049330 on line 263*****
+
  
  "1745 Forest Avenue, Staten Island, New York 10302" vs "1745 Forest Avenue"??????
  
- 
- BIN 3428826, 3337899  -- examples where DOB has correct building height, height listed with footprint is much higher
-
+ BIN 3428826, 3337899, 3425581  -- examples where DOB has correct building height, height listed with footprint is much higher
 */
 
 document.getElementById('searchInputId').addEventListener('keyup', checkSearchKey);
+window.addEventListener('popstate', (event) => { doParamSearch(event.state.search ?? ''); });
 const searchInput = document.getElementById('searchInputId');
 const addressDiv = document.getElementById('addressDivId');
 const binDiv = document.getElementById('binDivId');
@@ -34,8 +35,7 @@ if (paramSearch === null) {
     clearSearchLog();
     slippyMapDefault();
 } else {
-    searchInput.value = paramSearch.trim();
-    doSearch();
+    doParamSearch(paramSearch.trim());
 }
 
 
@@ -47,27 +47,12 @@ function checkSearchKey(e) {
     }
 }
 
-async function doJsonFetch(name, fetchUrl) {
-    writeSearchLog('\r\n' + name + ' query ' + fetchUrl + '\r\n');
-    let responseJson = {};
-    try {
-        const response = await fetch(fetchUrl);
-        if (!response.ok) {
-            throw new Error("Fetch response was not OK");
-        }       
-        responseJson = await response.json();
-        ['code', 'message', 'description'].forEach(warning => {
-            if (typeof(responseJson[warning]) !== 'undefined') {
-                writeSearchLog(' - got ' + warning + ' = "' + responseJson[warning] + '"');
-            }
-        });       
-    } catch (e) {
-        writeSearchLog(' - ERROR ' + e.message ?? '' + ' ' + response?.status ?? '' + ' ' + response?.statusText ?? '');
-    }
-    return responseJson;
+function doParamSearch(p) {
+    searchInput.value = p;
+    doSearch(false);
 }
 
-async function doSearch() {
+async function doSearch(addToHistory = true) {
     const searchText = searchInput.value.trim();
     searchInput.value = searchText;
     clearIoElements();
@@ -75,9 +60,11 @@ async function doSearch() {
     markerLatLon = null;
     footprintJson = [];
     footprintDrawn = false;
+    if (addToHistory) {
+        history.pushState({search: searchText}, '', window.location.href.split(/[?#]/)[0] + '?search=' + encodeURIComponent(searchText));
+    }
 
     //document.getElementById('searchLogTextareaId').style.color = 'black';
-
     const reMatch = searchText.match(latlonRegex);
     if (reMatch !== null) {
         writeSearchLog('Search text "' + searchText + '" ' + "looks like a latlon pair\r\nAttempting latlon search...\r\n");
@@ -111,7 +98,7 @@ async function doFootprintLatlonSearch(lat, lon) {
     
 //    const latLonApiQuery = 'https://data.cityofnewyork.us/api/geospatial/7w4b-tj9d?lat=' + lat + '&lng=' + lon + '&zoom=17';
     const latLonApiQuery = 'https://data.cityofnewyork.us/api/geospatial/qb5r-6dgf?lat=' + lat + '&lng=' + lon + '&zoom=17';
-    let fpJson = await doJsonFetch('"Building Footprints" latlon', latLonApiQuery);
+    let fpJson = await httpGetJson(latLonApiQuery, '"Building Footprints" latlon query ');
     if (fpJson.length > 0) {
         const latlonBin = fpJson[0].bin;
         if (validBin(latlonBin)) {
@@ -151,7 +138,7 @@ async function doFootprintBinSearch(bin) {
     row.innerHTML = '<td>Footprint</td><td>Yr Built</td><td>Status</td><td>Date</td><td>Height</td>';
 
     const buildingFootprintApiQuery = 'https://data.cityofnewyork.us/resource/qb5r-6dgf.json?bin=' + bin;
-    footprintJson = await doJsonFetch('"Building Footprint" BIN', buildingFootprintApiQuery);
+    footprintJson = await httpGetJson(buildingFootprintApiQuery, '"Building Footprint" BIN');
     if ((footprintJson[0]?.the_geom?.type ?? '') !== 'MultiPolygon') {
         /* Occasionally, the city's building footprints API (https://data.cityofnewyork.us/resource/qb5r-6dgf.json,
         documented at https://data.cityofnewyork.us/Housing-Development/Building-Footprints/nqwf-w8eh as the
@@ -162,7 +149,7 @@ async function doFootprintBinSearch(bin) {
         footprints as "MultiPolygon" even if they're just simple polygons.)
         */
         const buildingPointApiQuery = 'https://data.cityofnewyork.us/resource/7w4b-tj9d.json?bin=' + bin;
-        footprintJson = await doJsonFetch('Did not get a footprint, trying "Building Point" BIN', buildingPointApiQuery);        
+        footprintJson = await httpGetJson(buildingPointApiQuery, 'Did not get a footprint, trying "Building Point" BIN');        
     }
     if (footprintJson.length > 0) {
         let needBbl = (bblDiv.innerHTML === '');
@@ -213,7 +200,7 @@ async function doFootprintBinSearch(bin) {
             if (footprintJson[i].the_geom.type === 'MultiPolygon') {
                 processFootprint(i, bin, heightInMeters);
                 if (typeof(footprintJson[i]?.nycaabs_osm_xml) !== 'undefined') {
-                    footprintLinks = '<a href="data:text/xml;charset=utf-8,' + encodeURIComponent(footprintJson[i].nycaabs_osm_xml) + '" download="bin' + bin + '_footprint.osm">Download as .osm</a>  <a class="josmLink" href="#0" onclick="javascript:sendFootprintToJosm(' + i + ')">Send to JOSM</a>';
+                    footprintLinks = '<a href="data:text/xml;charset=utf-8,' + encodeURIComponent(footprintJson[i].nycaabs_osm_xml) + '" download="bin' + bin + '_footprint.osm">Download as .osm</a>  <a class="josmLink" href="javascript:void(0);" onclick="javascript:sendFootprintToJosm(' + i + ')">Send to JOSM</a>';
                 }
                 //Possibly consider a geojson download link as well -- iD users would be able to
                 //load this, though it only works as an imagery layer, not importable data.
@@ -304,11 +291,11 @@ async function doDobJobSearch(bin) {
     const maxResults = 15;
     let row = infoTable.insertRow(-1);
     row.className = 'rowHead';
-    row.innerHTML = '<td>DOB Job</td><td>Type</td><td>Status</td><td>Date</td><td>Height</td><td class="tdLink"><a href="' + constructUrlBisJobs(bin) + '">Job&nbsp;List&nbsp;@&nbsp;BIS</a> <a href="' + constructUrlBisJobs(bin, 'A') + '">Active&nbsp;Zoning&nbsp;Job&nbsp;@&nbsp;BIS</a></td>';
+    row.innerHTML = '<td>DOB BIS Job</td><td>Type</td><td>Status</td><td>Date</td><td>Height</td><td class="tdLink"><a href="' + constructUrlBisJobs(bin) + '">Job&nbsp;List&nbsp;@&nbsp;BIS</a> <a href="' + constructUrlBisJobs(bin, 'A') + '">Active&nbsp;Zoning&nbsp;Job&nbsp;@&nbsp;BIS</a></td>';
     let dobJobApiQuery = 'https://data.cityofnewyork.us/resource/ic3t-wcy2.json?$select=distinct%20job__,house__,street_name,borough,block,lot,job_type,job_status,latest_action_date,proposed_height,gis_latitude,gis_longitude&$where=bin__=%27' + bin + '%27';
     //Note: previously I was also requesting the "job_s1_no" field, and using it to populate the "allisn" url parameter of the BIS Zoning Documents page urls, imitating the urls generated by the BIS web portal. I've concluded that this field isn't neccessary (the Zoning Documents page seems to load just as well without it) so I'm no longer requesting or using it.
     
-    let json = await doJsonFetch('"DOB Job Application Filings"', dobJobApiQuery);
+    let json = await httpGetJson(dobJobApiQuery, '"DOB Job Application Filings"');
     let j = json?.length ?? 0;
     if (j > 0) {
         let needAddress = (addressDiv.innerHTML === '');
@@ -361,7 +348,7 @@ async function doDobJobSearch(bin) {
             if (!listedJobsWithHeight.includes(json[i].job__)) {
                 row = infoTable.insertRow(-1);
                 row.className = 'rowBg' + (addedRowCount % 2);
-                row.innerHTML = '<td>' + json[i].job__ + '</td><td><abbr title="' + expandJobType(json[i].job_type) + '">' + json[i].job_type + '<abbr></td><td><abbr title="' + expandJobStatus(json[i].job_status) + '">' + json[i].job_status + '<abbr></td><td>' + formatDate(json[i].latest_action_date) + '</td><td>' + formatHeight(json[i].proposed_height) + '</td><td class="tdLink"><a href="https://a810-bisweb.nyc.gov/bisweb/JobsQueryByNumberServlet?passjobnumber=' + json[i].job__ + '&passdocnumber=01">Job&nbsp;Details&nbsp;@&nbsp;BIS</a> <a href="https://a810-bisweb.nyc.gov/bisweb/JobsZoningDocumentsServlet?passjobnumber=' + json[i].job__ + '&passdocnumber=01&allbin=' + bin + '">Zoning&nbsp;Documents&nbsp;@&nbsp;BIS</a></td>';
+                row.innerHTML = '<td>' + json[i].job__ + '</td><td><abbr title="' + expandJobType(json[i].job_type) + '">' + json[i].job_type + '<abbr></td><td><abbr title="' + expandJobStatus(json[i].job_status) + '">' + json[i].job_status + '<abbr></td><td>' + formatDate(json[i].latest_action_date) + '</td><td>' + formatHeight(json[i].proposed_height) + '</td><td class="tdLink"><a href="https://a810-bisweb.nyc.gov/bisweb/JobsQueryByNumberServlet?passjobnumber=' + json[i].job__ + '&passdocnumber=01">Job&nbsp;Details&nbsp;@&nbsp;BIS</a> <a href="https://a810-bisweb.nyc.gov/bisweb/JobsZoningDocumentsServlet?passjobnumber=' + json[i].job__ + '&passdocnumber=01&allbin=' + bin + '">Zoning&nbsp;Docs&nbsp;@&nbsp;BIS</a></td>';
                 addedRowCount++;
                 if (json[i].proposed_height > 0) {
                     listedJobsWithHeight.push(json[i].job__);
@@ -382,7 +369,7 @@ async function doDobNowSearch(bin) {
         if (j > 2) {
             return dobNowStatus.slice(0,j);
         }
-        return dobNowStatus.replace('Certificate of Operation', 'Cert');
+        return dobNowStatus.replace('Certificate of Operation', 'C of O');
         //check ?search=40.64242407021607 -73.98076415061952 for another lengthy status
     }
 
@@ -390,7 +377,7 @@ async function doDobNowSearch(bin) {
     row.className = 'rowHead';
     row.innerHTML = '<td>DOB NOW Job</td><td>Type</td><td>Status</td><td>Date</td><td>Height</td>';
     let dobNowJobApiQuery = 'https://data.cityofnewyork.us/resource/w9ak-ipjd.json?$select=distinct%20job_filing_number,house_no,street_name,borough,block,lot,job_type,filing_status,current_status_date,proposed_height,latitude,longitude&$where=bin=%27' + bin + '%27&$order=current_status_date'; //may eventually want to request latlon in this query, in case we don't have it from elsewhere
-    let json = await doJsonFetch('"DOB NOW: Build – Job Application Filings"', dobNowJobApiQuery);
+    let json = await httpGetJson(dobNowJobApiQuery, '"DOB NOW: Build – Job Application Filings"');
     if (json.length > 0) {
         if (json.length === 1) {
             writeSearchLog(' - only one DOB NOW Job result for this BIN\r\n');
@@ -439,15 +426,16 @@ async function doDobNowSearch(bin) {
                 }
             }
 
-            row = infoTable.insertRow(-1);
-            row.className = 'rowBg' + (i % 2);
-            if (typeof(json[j-i].current_status_date) === 'undefined') {
-                currentStatusDate = '?';
-            } else {
-                currentStatusDate = json[j-i].current_status_date.slice(0,10);
+            if (typeof(json[j-i].job_filing_number) !== 'undefined') {
+                row = infoTable.insertRow(-1);
+                row.className = 'rowBg' + (i % 2);
+                if (typeof(json[j-i].current_status_date) === 'undefined') {
+                    currentStatusDate = '?';
+                } else {
+                    currentStatusDate = json[j-i].current_status_date.slice(0,10);
+                }
+                row.innerHTML = '<td>' + json[j-i].job_filing_number + '</td><td>' + json[j-i].job_type + '</td><td>' + shortenDobNowStatus(json[j-i].filing_status) + '</td><td>' + currentStatusDate + '</td><td>' + formatHeight(json[j-i].proposed_height) + '</td>'; //<td class="tdLink"><a href="' + constructUrlDobNowDoc(json[j-i].job_filing_number, boroCode) + '">Zoning&nbsp;Docs&nbsp;@&nbsp;DOB&nbsp;Now</a></td>';
             }
-
-            row.innerHTML = '<td>' + json[j-i].job_filing_number + '</td><td>' + json[j-i].job_type + '</td><td>' + shortenDobNowStatus(json[j-i].filing_status) + '</td><td>' + currentStatusDate + '</td><td>' + formatHeight(json[j-i].proposed_height) + '</td>';
         }
     } else {
         writeSearchLog(' - no DOB NOW Job results for this BIN\r\n');
@@ -455,6 +443,7 @@ async function doDobNowSearch(bin) {
         row.innerHTML = '<td>none found</td>';
     }
 }
+
 
 async function doAddressSearch(searchText) {
     /* For the address search, we'll use the NYC GeoSearch API (https://geosearch.planninglabs.nyc)
@@ -493,12 +482,12 @@ async function doAddressSearch(searchText) {
 
     function boroMatchRank(resultBin, searchBoro) {
         if (searchBoro === 0) {
-            return 200000;
+            return 2000000;
         }
         if (resultBin.slice(0,1) === searchBoro.toString()) {
-            return 100000;
+            return 1000000;
         }
-        return 900000;
+        return 9000000;
     }
 
     function streetMatchRank(resultStreet, searchStreet) {
@@ -516,22 +505,50 @@ async function doAddressSearch(searchText) {
         }
         return 90000;
     }
+    
+    function houseNumberMatchRank(resultHouseNumber, searchHouseNumber) {
+        if (searchHouseNumber === '') {
+            return 4000;
+        }
+        if (searchHouseNumber === resultHouseNumber) {
+            return 1000;
+        }
+        if (resultHouseNumber.includes(searchHouseNumber)) {
+            return 200000;
+        }
+        if (searchHouseNumber.includes(resultHouseNumber)) {
+            return 300000;
+        }
+        return 900000;
+    }
         
     let parsedAddress = parseNycAddress(searchText);
     writeSearchLog(' - parser "parse-nyc-address" found ' + JSON.stringify(parsedAddress));
     let searchBoroNum = parsedAddress.borough ?? 0;
     let searchStreet = parsedAddress.street ?? '';
-    
+    let searchHouseNumber = parsedAddress.housenumber ?? ''; 
+ 
     //To-do if parseNycAddress() gives us street and boro, attempt a Geoservice search (if we have a key cookie)
     //If Geoservice fails us, fall back to NYC GeoSearch
  
     const nycGeosearchApiQuery = 'https://geosearch.planninglabs.nyc/v2/search?text=' + encodeURIComponent(searchText);
-    let parserDesc = ' - unspecified parser found ';
-    let json = await doJsonFetch('"NYC GeoSearch"', nycGeosearchApiQuery);
-    if (typeof json?.geocoding?.query?.parser !== 'undefined') {
-        parserDesc = ' - parser "' + json.geocoding.query.parser + '" found ';
+    let json = await httpGetJson(nycGeosearchApiQuery, '"NYC GeoSearch"');
+    
+    if (typeof json?.geocoding !== 'undefined') {
+        (json.geocoding?.errors ?? []).forEach (error => {
+            writeSearchLog(' - GeoSearch error "' + error + '"\r\n');
+        });
+        let parserDesc = 'an unspecified parser';
+        if (typeof json.geocoding?.query?.parser !== 'undefined') {
+            parserDesc = 'parser "' + json.geocoding.query.parser + '"';
+        }
+        if (typeof json.geocoding?.query?.parsed_text !== 'undefined') {
+            writeSearchLog(' - GeoSearch used ' + parserDesc + ', parsed address=' + JSON.stringify(json.geocoding.query.parsed_text) + ' \r\n');
+        } else {
+            writeSearchLog(' - GeoSearch used ' + parserDesc + ', no parsed address was returned\r\n');
+        }
     }
-    writeSearchLog(parserDesc + JSON.stringify(json?.geocoding?.query?.parsed_text ?? {}) + '\r\n');
+    
     let geosearchResults = json?.features ?? [];
     if (geosearchResults.length === 0) {
         writeSearchLog(' - no NYC GeoSearch results');
@@ -540,10 +557,12 @@ async function doAddressSearch(searchText) {
             writeSearchLog(' - only one NYC GeoSearch result');
             //document.getElementById('searchLogTextareaId').style.color = 'blue';
         } else {
-            let upperSearch = searchText.toUpperCase();
+            //let upperSearch = searchText.toUpperCase();
             for (let i = 0; i < geosearchResults.length; i++) {
                 geosearchResults[i].geosearch_rank = i;
-                geosearchResults[i].nycaabs_rank = boroMatchRank(geosearchResults[i].properties.addendum.pad.bin, searchBoroNum) + streetMatchRank(geosearchResults[i].properties.street, searchStreet);
+                geosearchResults[i].nycaabs_rank = i + boroMatchRank(geosearchResults[i].properties.addendum.pad.bin, searchBoroNum)
+                                                 + streetMatchRank(geosearchResults[i].properties.street, searchStreet)
+                                                 + houseNumberMatchRank(geosearchResults[i].properties.housenumber ?? '', searchHouseNumber);
             }
             json.features.sort(function(a, b) { return a.nycaabs_rank - b.nycaabs_rank; });
             if (geosearchResults[0].geosearch_rank === 0) {
@@ -591,15 +610,15 @@ async function doAddressSearch(searchText) {
         possible.
 
         There's a web app wrapper around the NYC Planning Geoservice API called "GOAT",
-        http://a030-goat.nyc.gov/goat/. The GOAT app supports URL query parameters and is free
+        https://a030-goat.nyc.gov/goat. The GOAT app supports URL query parameters and is free
         to use without credentials, but its cross-site scripting policy prevents us from screen-
         scraping the results from our own web app. In theory we could attempt to work around
         this with a CORS proxy but that's messy. (GOAT is also available as a downloadable
         offline desktop app, but that version only uses the standard PAD file, not the TPAD
         file.)
 
-        For now, we'll simply rely on the results from the NYC GeoSearch with the following
-        known limitations:
+        For now, we'll simply rely on the results from NYC GeoSearch with the following known
+        limitations:
          - Slightly out-of-date data (PAD only, not TPAD) that will not reflect newer
            developments and may return obsolete or temporary BINs instead of current ones.
          - Incomplete housenumber range info, especially for multi-street buildings.
@@ -626,8 +645,7 @@ async function doAddressSearch(searchText) {
             writeSearchLog(' - showing invalid BIN ' + bin + ', deeper search impossible without a valid BIN\r\n');
             writeInvalidBin(bin);
         }
-
-        if ((Array.isArray(geosearchResults[0]?.geometry?.coordinates)) && ((geosearchResults[0]?.geometry?.coordinates[1] ?? 0) < -73) && ((geosearchResults[0]?.geometry?.coordinates[0] ?? 0) > 40)) {
+        if (((geosearchResults[0]?.geometry?.coordinates[0] ?? 0) < -73) && ((geosearchResults[0]?.geometry?.coordinates[1] ?? 0) > 40)) {
             markerLatLon = [geosearchResults[0].geometry.coordinates[1], geosearchResults[0].geometry.coordinates[0]];
             writeSearchLog(' - got latlon ' + markerLatLon[0] + ', ' +  markerLatLon[0] + ' from Geosearch\r\n');
         }
@@ -971,6 +989,62 @@ function menuOsmReverse(e) {
 
 function menuNominatimReverse(e) {
     window.open('https://nominatim.openstreetmap.org/ui/reverse.html?lat=' + e.latlng.lat + '&lon=' + e.latlng.lng, '_blank');
+}
+
+
+/* NETWORK FUNCTONS */
+
+async function httpGetJson(getUrl, name) {
+    writeSearchLog('\r\n' + name + ' query ' + getUrl + '\r\n');
+    let responseJson = {};
+    let errorMsg = '';    
+    try {
+        const response = await fetch(getUrl);
+        if (!response.ok) {
+            writeSearchLog(' - Fetch response was not OK, status ' + response.status + ' "' + response.statusText + '"\r\n');
+            errorMsg = 'Fetch response was not OK';
+        }
+        responseJson = await response.json();
+        if (typeof(responseJson) !== 'undefined') {
+            ['code', 'message', 'description'].forEach(warning => {
+                if (typeof(responseJson[warning]) !== 'undefined') {
+                    writeSearchLog(' - json "' + warning + '"="' + responseJson[warning] + '"\r\n');
+                }
+            });
+        }
+        if (errorMsg !== '') {
+            throw new Error(errorMsg); 
+        }
+    } catch (e) {
+        writeSearchLog(' - ERROR: ' + (e.message ?? '') + '\r\n');
+    }
+    return responseJson;
+}
+
+async function httpHeadContentLength(headUrl) {
+    let contentLength = 0;
+    const response = await fetch(headUrl, {method: 'HEAD'});
+    if (response.ok) {
+        contentLength = Number(response.headers.get("content-length"));
+    }
+    return contentLength;
+}
+
+async function httpJosmRemoteControl(josmCommand) {
+    const josmUrl = 'http://localhost:8111/' + josmCommand;
+    writeSearchLog(' - JOSM command ' + josmUrl + '\r\n');
+    try {
+        const response = await fetch(josmUrl);
+        if (response.ok) {
+            return true;
+        } else {
+            writeSearchLog(' - JOSM response was not OK, status ' + response.status + ' "' + response.statusText + '"\r\n');
+            throw new Error('JOSM response was not OK');
+        }
+    } catch (e) {
+        writeSearchLog(' - ERROR: ' + (e.message ?? '') + '\r\n');
+    }
+    return false;
 }
 
 
