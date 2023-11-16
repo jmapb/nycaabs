@@ -7,9 +7,9 @@
  - 855 Clarkson Brooklyn
  -         ***** TODO -- non-rejected plan should be sorted above rejected plan, see BIN 3049330 on line 263*****
 
- 
+
  "1745 Forest Avenue, Staten Island, New York 10302" vs "1745 Forest Avenue"??????
- 
+
  BIN 3428826, 3337899, 3425581  -- examples where DOB has correct building height, height listed with footprint is much higher
 */
 
@@ -19,6 +19,7 @@ const searchInput = document.getElementById('searchInputId');
 const addressDiv = document.getElementById('addressDivId');
 const binDiv = document.getElementById('binDivId');
 const bblDiv = document.getElementById('bblDivId');
+const buildingClassDiv = document.getElementById('buildingClassDivId');
 const addressRangeList = document.getElementById('addressRangeListId');
 const infoTable = document.getElementById('infoTableId');
 const bblRegex = /^([1-5])([0-9]{5})([0-9]{4})$/;
@@ -95,7 +96,7 @@ async function doSearch(addToHistory = true) {
 
 async function doFootprintLatlonSearch(lat, lon) {
     markerLatLon = [lat, lon];
-    
+
 //    const latLonApiQuery = 'https://data.cityofnewyork.us/api/geospatial/7w4b-tj9d?lat=' + lat + '&lng=' + lon + '&zoom=17';
     const latLonApiQuery = 'https://data.cityofnewyork.us/api/geospatial/qb5r-6dgf?lat=' + lat + '&lng=' + lon + '&zoom=17';
     let fpJson = await httpGetJson(latLonApiQuery, '"Building Footprints" latlon query ');
@@ -149,7 +150,7 @@ async function doFootprintBinSearch(bin) {
         footprints as "MultiPolygon" even if they're just simple polygons.)
         */
         const buildingPointApiQuery = 'https://data.cityofnewyork.us/resource/7w4b-tj9d.json?bin=' + bin;
-        footprintJson = await httpGetJson(buildingPointApiQuery, 'Did not get a footprint, trying "Building Point" BIN');        
+        footprintJson = await httpGetJson(buildingPointApiQuery, 'Did not get a footprint, trying "Building Point" BIN');
     }
     if (footprintJson.length > 0) {
         let needBbl = (bblDiv.innerHTML === '');
@@ -224,7 +225,7 @@ async function doDobJobSearch(bin) {
         newest A1, then A2, then A3 (various levels of building alterations) and after that who knows.
         So that's what this sort rank does. I have my doubts that this approach will work every time,
         but I haven't found any counterexamples yet. (Please report if found!)
-        
+
         ***** TODO -- non-rejected plan should be sorted above rejected plan, see BIN 3049330 *****
 
         The full list of DOB job types (taken from BIS's JobsQueryByLocationServlet page) is:
@@ -241,7 +242,7 @@ async function doDobJobSearch(bin) {
           SU - SUBDIVISION - UNIMPROVED
         */
         const jobTypes = ['A3', 'A2', 'A1', 'NB'];
-        return parseInt((String(jobTypes.indexOf(type) + 2) + date.slice(-4) + date.slice(0,2) + date.slice(3,5)) * 1000000000) + Math.round(height * 1000);
+        return parseInt((String(jobTypes.indexOf(type) + 2) + date.slice(0,4) + date.slice(5,7) + date.slice(8,10)) * 1000000000) + Math.round(height * 1000);
     }
 
     function expandJobType(code) {
@@ -284,17 +285,29 @@ async function doDobJobSearch(bin) {
         return jobStatuses[code] ?? 'Unknown job status code ' + code;
     }
 
-    function formatDate(mmxddxyyyy) {
-        return mmxddxyyyy.slice(-4) + '-' + mmxddxyyyy.slice(0,2) + '-' + mmxddxyyyy.slice(3,5);
+    function formatDate(input) {
+        /* Dates in the city's DOB job dataset are almost all mm-dd-yyyy but there are a few yyyy-mm-dd thrown in
+           there just to make things fun. */
+        input = input.trim();
+        let matches = input.match(/^(\d\d)\D(\d\d)\D(\d\d\d\d)/);
+        if (matches !== null) {
+            return matches[3] + '-' + matches[1] + '-' + matches[2];
+        }
+        matches = input.match(/^(\d\d\d\d)\D(\d\d)\D(\d\d)/);
+        if (matches !== null) {
+            return matches[1] + '-' + matches[2] + '-' + matches[3];
+        }
+        return input;
     }
 
+    const buildingClassMap = new Map();
     const maxResults = 15;
     let row = infoTable.insertRow(-1);
     row.className = 'rowHead';
     row.innerHTML = '<td>DOB BIS Job</td><td>Type</td><td>Status</td><td>Date</td><td>Height</td><td class="tdLink"><a href="' + constructUrlBisJobs(bin) + '">Job&nbsp;List&nbsp;@&nbsp;BIS</a> <a href="' + constructUrlBisJobs(bin, 'A') + '">Active&nbsp;Zoning&nbsp;Job&nbsp;@&nbsp;BIS</a></td>';
-    let dobJobApiQuery = 'https://data.cityofnewyork.us/resource/ic3t-wcy2.json?$select=distinct%20job__,house__,street_name,borough,block,lot,job_type,job_status,latest_action_date,proposed_height,gis_latitude,gis_longitude&$where=bin__=%27' + bin + '%27';
+    let dobJobApiQuery = 'https://data.cityofnewyork.us/resource/ic3t-wcy2.json?$select=distinct%20job__,house__,street_name,borough,block,lot,building_class,job_type,job_status,latest_action_date,proposed_height,gis_latitude,gis_longitude&$where=bin__=%27' + bin + '%27';
     //Note: previously I was also requesting the "job_s1_no" field, and using it to populate the "allisn" url parameter of the BIS Zoning Documents page urls, imitating the urls generated by the BIS web portal. I've concluded that this field isn't neccessary (the Zoning Documents page seems to load just as well without it) so I'm no longer requesting or using it.
-    
+
     let json = await httpGetJson(dobJobApiQuery, '"DOB Job Application Filings"');
     let j = json?.length ?? 0;
     if (j > 0) {
@@ -305,6 +318,8 @@ async function doDobJobSearch(bin) {
         let needBbl = (bblDiv.innerHTML === '');
         let jobLot = '';
         let jobBlock = '';
+        let actionDate = '';
+        let buildingClass = '';
         if (j === 1) {
             writeSearchLog(' - only one DOB Job Application result for this BIN\r\n');
         } else if (j > maxResults) {
@@ -313,7 +328,7 @@ async function doDobJobSearch(bin) {
         } else {
             writeSearchLog(' - ' + j + ' DOB Job Application results for this BIN\r\n');
         }
-        json.sort(function(a, b) { return dobJobSortRank(b.job_type, b.latest_action_date, b.proposed_height) - dobJobSortRank(a.job_type, a.latest_action_date, a.proposed_height); });
+        json.sort(function(a, b) { return dobJobSortRank(b.job_type, formatDate(b.latest_action_date), b.proposed_height) - dobJobSortRank(a.job_type, formatDate(a.latest_action_date), a.proposed_height); });
         const listedJobsWithHeight = [];
         let addedRowCount = 0;
         for (let i = 0; i < j; i++) {
@@ -345,10 +360,20 @@ async function doDobJobSearch(bin) {
                 }
             }
 
+            actionDate = formatDate(json[i].latest_action_date);
+            buildingClass = json[i].building_class.trim();
+            //writeSearchLog('building class ' + buildingClass + '; ' + buildingClasses[buildingClass]);
+
+            buildingClassMap.has(buildingClass)
+            if (!buildingClassMap.has(buildingClass) || (actionDate > buildingClassMap.get(buildingClass))) {
+                buildingClassMap.set(buildingClass, actionDate);
+            }
+           // writeSearchLog('bcl:' + buildingClasses.length + '\r');
+
             if (!listedJobsWithHeight.includes(json[i].job__)) {
                 row = infoTable.insertRow(-1);
                 row.className = 'rowBg' + (addedRowCount % 2);
-                row.innerHTML = '<td>' + json[i].job__ + '</td><td><abbr title="' + expandJobType(json[i].job_type) + '">' + json[i].job_type + '<abbr></td><td><abbr title="' + expandJobStatus(json[i].job_status) + '">' + json[i].job_status + '<abbr></td><td>' + formatDate(json[i].latest_action_date) + '</td><td>' + formatHeight(json[i].proposed_height) + '</td><td class="tdLink"><a href="https://a810-bisweb.nyc.gov/bisweb/JobsQueryByNumberServlet?passjobnumber=' + json[i].job__ + '&passdocnumber=01">Job&nbsp;Details&nbsp;@&nbsp;BIS</a> <a href="https://a810-bisweb.nyc.gov/bisweb/JobsZoningDocumentsServlet?passjobnumber=' + json[i].job__ + '&passdocnumber=01&allbin=' + bin + '">Zoning&nbsp;Docs&nbsp;@&nbsp;BIS</a></td>';
+                row.innerHTML = '<td>' + json[i].job__ + '</td><td><abbr title="' + expandJobType(json[i].job_type) + '">' + json[i].job_type + '</abbr></td><td><abbr title="' + expandJobStatus(json[i].job_status) + '">' + json[i].job_status + '</abbr></td><td>' + formatDate(json[i].latest_action_date) + '</td><td>' + formatHeight(json[i].proposed_height) + '</td><td class="tdLink"><a href="https://a810-bisweb.nyc.gov/bisweb/JobsQueryByNumberServlet?passjobnumber=' + json[i].job__ + '&passdocnumber=01">Job&nbsp;Details&nbsp;@&nbsp;BIS</a> <a href="https://a810-bisweb.nyc.gov/bisweb/JobsZoningDocumentsServlet?passjobnumber=' + json[i].job__ + '&passdocnumber=01&allbin=' + bin + '">Zoning&nbsp;Docs&nbsp;@&nbsp;BIS</a></td>';
                 addedRowCount++;
                 if (json[i].proposed_height > 0) {
                     listedJobsWithHeight.push(json[i].job__);
@@ -360,6 +385,7 @@ async function doDobJobSearch(bin) {
         row = infoTable.insertRow(-1);
         row.innerHTML = '<td>none found</td>';
     }
+    writeBuildingClass(buildingClassMap);
 }
 
 async function doDobNowSearch(bin) {
@@ -505,7 +531,7 @@ async function doAddressSearch(searchText) {
         }
         return 90000;
     }
-    
+
     function houseNumberMatchRank(resultHouseNumber, searchHouseNumber) {
         if (searchHouseNumber === '') {
             return 4000;
@@ -521,19 +547,19 @@ async function doAddressSearch(searchText) {
         }
         return 900000;
     }
-        
+
     let parsedAddress = parseNycAddress(searchText);
     writeSearchLog(' - parser "parse-nyc-address" found ' + JSON.stringify(parsedAddress));
     let searchBoroNum = parsedAddress.borough ?? 0;
     let searchStreet = parsedAddress.street ?? '';
-    let searchHouseNumber = parsedAddress.housenumber ?? ''; 
- 
+    let searchHouseNumber = parsedAddress.housenumber ?? '';
+
     //To-do if parseNycAddress() gives us street and boro, attempt a Geoservice search (if we have a key cookie)
     //If Geoservice fails us, fall back to NYC GeoSearch
- 
+
     const nycGeosearchApiQuery = 'https://geosearch.planninglabs.nyc/v2/search?text=' + encodeURIComponent(searchText);
     let json = await httpGetJson(nycGeosearchApiQuery, '"NYC GeoSearch"');
-    
+
     if (typeof json?.geocoding !== 'undefined') {
         (json.geocoding?.errors ?? []).forEach (error => {
             writeSearchLog(' - GeoSearch error "' + error + '"\r\n');
@@ -548,7 +574,7 @@ async function doAddressSearch(searchText) {
             writeSearchLog(' - GeoSearch used ' + parserDesc + ', no parsed address was returned\r\n');
         }
     }
-    
+
     let geosearchResults = json?.features ?? [];
     if (geosearchResults.length === 0) {
         writeSearchLog(' - no NYC GeoSearch results');
@@ -684,10 +710,248 @@ function writeBbl(boro, block, lot) {
     bblDiv.innerHTML = '<strong>BBL</strong> ' + boro + block + lot + ' <a href="' + constructUrlBisBrowse(boro, block) + '">Browse&nbsp;Block&nbsp;@&nbsp;BIS</a> <a href="' + constructUrlBisBrowse(boro, block, lot) + '">Browse&nbsp;BBL&nbsp;@&nbsp;BIS</a> <a href="' + constructUrlZolaLot(boro, block, lot) + '">View&nbsp;BBL&nbsp;@&nbsp;ZoLa</a>';
 }
 
+function writeBuildingClass(buildingClassMap) {
+
+    function expandBuildingClass(code) {
+        const buildingClasses = { A0: 'CAPE COD',
+                                  A1: 'TWO STORIES - DETACHED SM OR MID',
+                                  A2: 'ONE STORY - PERMANENT LIVING QUARTER',
+                                  A3: 'LARGE SUBURBAN RESIDENCE',
+                                  A4: 'CITY RESIDENCE ONE FAMILY',
+                                  A5: 'ONE FAMILY ATTACHED OR SEMI-DETACHED',
+                                  A6: 'SUMMER COTTAGE',
+                                  A7: 'MANSION TYPE OR TOWN HOUSE',
+                                  A8: 'BUNGALOW COLONY - COOPERATIVELY OWNED LAND',
+                                  A9: 'MISCELLANEOUS ONE FAMILY',
+                                  B1: 'TWO FAMILY BRICK',
+                                  B2: 'TWO FAMILY FRAME',
+                                  B3: 'TWO FAMILY CONVERTED FROM ONE FAMILY',
+                                  B9: 'MISCELLANEOUS TWO FAMILY',
+                                  C0: 'THREE FAMILIES',
+                                  C1: 'OVER SIX FAMILIES WITHOUT STORES',
+                                  C2: 'FIVE TO SIX FAMILIES',
+                                  C3: 'FOUR FAMILIES',
+                                  C4: 'OLD LAW TENEMENT',
+                                  C5: 'CONVERTED DWELLINGS OR ROOMING HOUSE',
+                                  C6: 'WALK-UP COOPERATIVE',
+                                  C7: 'WALK-UP APT. OVER SIX FAMILIES WITH STORES',
+                                  C8: 'WALK-UP CO-OP; CONVERSION FROM LOFT/WAREHOUSE',
+                                  C9: 'GARDEN APARTMENTS',
+                                  CB: 'WALKUP APT LESS THAN 11 UNITS RESIDENTIAL',
+                                  CC: 'WALKUP CO-OP APT LESS THAN 11 UNITS RESIDENTIAL',
+                                  CM: 'MOBILE HOMES/TRAILER PARKS',
+                                  D0: 'ELEVATOR CO-OP; CONVERSION FROM LOFT/WAREHOUSE',
+                                  D1: 'ELEVATOR APT; SEMI-FIREPROOF WITHOUT STORES',
+                                  D2: 'ELEVATOR APT; ARTISTS IN RESIDENCE',
+                                  D3: 'ELEVATOR APT; FIREPROOF WITHOUT STORES',
+                                  D4: 'ELEVATOR COOPERATIVE',
+                                  D5: 'ELEVATOR APT; CONVERTED',
+                                  D6: 'ELEVATOR APT; FIREPROOF WITH STORES',
+                                  D7: 'ELEVATOR APT; SEMI-FIREPROOF WITH STORES',
+                                  D8: 'ELEVATOR APT; LUXURY TYPE',
+                                  D9: 'ELEVATOR APT; MISCELLANEOUS',
+                                  DB: 'ELEVATOR APT LESS THAN 11 UNITS RESIDENTIAL',
+                                  DC: 'ELEVATOR CO-OP APT LESS THAN 11 UNITS RESIDENTIAL',
+                                  E1: 'GENERAL WAREHOUSE',
+                                  E2: 'CONTRACTORS WAREHOUSE',
+                                  E7: 'SELF-STORAGE WAREHOUSES',
+                                  E9: 'MISCELLANEOUS WAREHOUSE',
+                                  F1: 'FACTORY; HEAVY MANUFACTURING - FIREPROOF',
+                                  F2: 'FACTORY; SPECIAL CONSTRUCTION - FIREPROOF',
+                                  F4: 'FACTORY; INDUSTRIAL SEMI-FIREPROOF',
+                                  F5: 'FACTORY; LIGHT MANUFACTURING',
+                                  F8: 'FACTORY; TANK FARM',
+                                  F9: 'FACTORY; INDUSTRIAL-MISCELLANEOUS',
+                                  G0: 'GARAGE; RESIDENTIAL TAX CLASS 1',
+                                  G1: 'ALL PARKING GARAGES',
+                                  G2: 'AUTO BODY/COLLISION OR AUTO REPAIR',
+                                  G3: 'GAS STATION WITH RETAIL STORE',
+                                  G4: 'GAS STATION WITH SERVICE/AUTO REPAIR',
+                                  G5: 'GAS STATION ONLY WITH/WITHOUT SMALL KIOSK',
+                                  G6: 'LICENSED PARKING LOT',
+                                  G7: 'UNLICENSED PARKING LOT',
+                                  G8: 'CAR SALES/RENTAL WITH SHOWROOM',
+                                  G9: 'MISCELLANEOUS GARAGE',
+                                  GU: 'CAR SALES OR RENTAL LOTS WITHOUT SHOWROOM',
+                                  GW: 'CAR WASH OR LUBRITORIUM FACILITY',
+                                  HB: 'BOUTIQUE HOTEL: 10-100 ROOMS, W/LUXURY FACILITIES, THEMED, STYLISH, W/FULL SVC ACCOMMODATIONS',
+                                  HH: 'HOSTELS- BED RENTALS IN DORMITORY-LIKE SETTINGS W/SHARED ROOMS & BATHROOMS',
+                                  HR: 'SRO- 1 OR 2 PEOPLE HOUSED IN INDIVIDUAL ROOMS IN MULTIPLE DWELLING AFFORDABLE HOUSING',
+                                  HS: 'EXTENDED STAY/SUITE: AMENITIES SIMILAR TO APT; TYPICALLY CHARGE WEEKLY RATES & LESS EXPENSIVE THAN FULL-SERVICE HOTEL',
+                                  H1: 'LUXURY HOTEL',
+                                  H2: 'FULL SERVICE HOTEL',
+                                  H3: 'LIMITED SERVICE HOTEL; MANY AFFILIATED WITH NATIONAL CHAIN',
+                                  H4: 'MOTEL',
+                                  H5: 'HOTEL; PRIVATE CLUB, LUXURY TYPE',
+                                  H6: 'APARTMENT HOTEL',
+                                  H7: 'APARTMENT HOTEL - COOPERATIVELY OWNED',
+                                  H8: 'DORMITORY',
+                                  H9: 'MISCELLANEOUS HOTEL',
+                                  I1: 'HOSPITAL, SANITARIUM, MENTAL INSTITUTION',
+                                  I2: 'INFIRMARY',
+                                  I3: 'DISPENSARY',
+                                  I4: 'HOSPITAL; STAFF FACILITY',
+                                  I5: 'HEALTH CENTER, CHILD CENTER, CLINIC',
+                                  I6: 'NURSING HOME',
+                                  I7: 'ADULT CARE FACILITY',
+                                  I9: 'MISCELLANEOUS HOSPITAL, HEALTH CARE FACILITY',
+                                  J1: 'THEATRE; ART TYPE LESS THAN 400 SEATS',
+                                  J2: 'THEATRE; ART TYPE MORE THAN 400 SEATS',
+                                  J3: 'MOTION PICTURE THEATRE WITH BALCONY',
+                                  J4: 'LEGITIMATE THEATRE, SOLE USE',
+                                  J5: 'THEATRE IN MIXED-USE BUILDING',
+                                  J6: 'TELEVISION STUDIO',
+                                  J7: 'OFF BROADWAY TYPE THEATRE',
+                                  J8: 'MULTIPLEX PICTURE THEATRE',
+                                  J9: 'MISCELLANEOUS THEATRE',
+                                  K1: 'ONE STORY RETAIL BUILDING',
+                                  K2: 'MULTI-STORY RETAIL BUILDING (2 OR MORE)',
+                                  K3: 'MULTI-STORY DEPARTMENT STORE',
+                                  K4: 'PREDOMINANT RETAIL WITH OTHER USES',
+                                  K5: 'STAND-ALONE FOOD ESTABLISHMENT',
+                                  K6: 'SHOPPING CENTER WITH OR WITHOUT PARKING',
+                                  K7: 'BANKING FACILITIES WITH OR WITHOUT PARKING',
+                                  K8: 'BIG BOX RETAIL: NOT AFFIXED & STANDING ON OWN LOT W/PARKING, E.G. COSTCO & BJS',
+                                  K9: 'MISCELLANEOUS STORE BUILDING',
+                                  L1: 'LOFT; OVER 8 STORIES (MID MANH. TYPE)',
+                                  L2: 'LOFT; FIREPROOF AND STORAGE TYPE WITHOUT STORES',
+                                  L3: 'LOFT; SEMI-FIREPROOF',
+                                  L8: 'LOFT; WITH RETAIL STORES OTHER THAN TYPE ONE',
+                                  L9: 'MISCELLANEOUS LOFT',
+                                  M1: 'CHURCH, SYNAGOGUE, CHAPEL',
+                                  M2: 'MISSION HOUSE (NON-RESIDENTIAL)',
+                                  M3: 'PARSONAGE, RECTORY',
+                                  M4: 'CONVENT',
+                                  M9: 'MISCELLANEOUS RELIGIOUS FACILITY',
+                                  N1: 'ASYLUM',
+                                  N2: 'HOME FOR INDIGENT CHILDREN, AGED, HOMELESS',
+                                  N3: 'ORPHANAGE',
+                                  N4: 'DETENTION HOUSE FOR WAYWARD GIRLS',
+                                  N9: 'MISCELLANEOUS ASYLUM, HOME',
+                                  O1: 'OFFICE ONLY - 1 STORY',
+                                  O2: 'OFFICE ONLY 2 - 6 STORIES',
+                                  O3: 'OFFICE ONLY 7 - 19 STORIES',
+                                  O4: 'OFFICE ONLY WITH OR WITHOUT COMM - 20 STORIES OR MORE',
+                                  O5: 'OFFICE WITH COMM - 1 TO 6 STORIES',
+                                  O6: 'OFFICE WITH COMM 7 - 19 STORIES',
+                                  O7: 'PROFESSIONAL BUILDINGS/STAND ALONE FUNERAL HOMES',
+                                  O8: 'OFFICE WITH APARTMENTS ONLY (NO COMM)',
+                                  O9: 'MISCELLANEOUS AND OLD STYLE BANK BLDGS.',
+                                  P1: 'CONCERT HALL',
+                                  P2: 'LODGE ROOM',
+                                  P3: 'YWCA, YMCA, YWHA, YMHA, PAL',
+                                  P4: 'BEACH CLUB',
+                                  P5: 'COMMUNITY CENTER',
+                                  P6: 'AMUSEMENT PLACE, BATH HOUSE, BOAT HOUSE',
+                                  P7: 'MUSEUM',
+                                  P8: 'LIBRARY',
+                                  P9: 'MISCELLANEOUS INDOOR PUBLIC ASSEMBLY',
+                                  Q1: 'PARKS/RECREATION FACILTY',
+                                  Q2: 'PLAYGROUND',
+                                  Q3: 'OUTDOOR POOL',
+                                  Q4: 'BEACH',
+                                  Q5: 'GOLF COURSE',
+                                  Q6: 'STADIUM, RACE TRACK, BASEBALL FIELD',
+                                  Q7: 'TENNIS COURT',
+                                  Q8: 'MARINA, YACHT CLUB',
+                                  Q9: 'MISCELLANEOUS OUTDOOR RECREATIONAL FACILITY',
+                                  RA: 'CONDO; CULTURAL, MEDICAL, EDUCATIONAL, ETC.',
+                                  RB: 'CONDO; OFFICE SPACE',
+                                  RG: 'CONDO; INDOOR PARKING',
+                                  RH: 'CONDO; HOTEL/BOATEL',
+                                  RK: 'CONDO; RETAIL SPACE',
+                                  RP: 'CONDO; OUTDOOR PARKING',
+                                  RR: 'CONDOMINIUM RENTALS',
+                                  RS: 'CONDO; NON-BUSINESS STORAGE SPACE',
+                                  RT: 'CONDO; TERRACES/GARDENS/CABANAS',
+                                  RW: 'CONDO; WAREHOUSE/FACTORY/INDUSTRIAL',
+                                  R0: 'SPECIAL CONDOMINIUM BILLING LOT',
+                                  R1: 'CONDO; RESIDENTIAL UNIT IN 2-10 UNIT BLDG.',
+                                  R2: 'CONDO; RESIDENTIAL UNIT IN WALK-UP BLDG.',
+                                  R3: 'CONDO; RESIDENTIAL UNIT IN 1-3 STORY BLDG.',
+                                  R4: 'CONDO; RESIDENTIAL UNIT IN ELEVATOR BLDG.',
+                                  R5: 'CONDO; MISCELLANEOUS COMMERCIAL',
+                                  R6: 'CONDO; RESID.UNIT OF 1-3 UNIT BLDG-ORIG CLASS 1',
+                                  R7: 'CONDO; COMML.UNIT OF 1-3 UNIT BLDG-ORIG CLASS 1',
+                                  R8: 'CONDO; COMML.UNIT OF 2-10 UNIT BLDG.',
+                                  R9: 'CO-OP WITHIN A CONDOMINIUM',
+                                  S0: 'PRIMARILY 1 FAMILY WITH 2 STORES OR OFFICES',
+                                  S1: 'PRIMARILY 1 FAMILY WITH 1 STORE OR OFFICE',
+                                  S2: 'PRIMARILY 2 FAMILY WITH 1 STORE OR OFFICE',
+                                  S3: 'PRIMARILY 3 FAMILY WITH 1 STORE OR OFFICE',
+                                  S4: 'PRIMARILY 4 FAMILY WITH 1 STORE OR OFFICE',
+                                  S5: 'PRIMARILY 5-6 FAMILY WITH 1 STORE OR OFFICE',
+                                  S9: 'SINGLE OR MULTIPLE DWELLING WITH STORES OR OFFICES',
+                                  T1: 'AIRPORT, AIRFIELD, TERMINAL',
+                                  T2: 'PIER, DOCK, BULKHEAD',
+                                  T9: 'MISCELLANEOUS TRANSPORTATION FACILITY',
+                                  U0: 'UTILITY COMPANY LAND AND BUILDING',
+                                  U1: 'BRIDGE, TUNNEL, HIGHWAY',
+                                  U2: 'GAS OR ELECTRIC UTILITY',
+                                  U3: 'CEILING RAILROAD',
+                                  U4: 'TELEPHONE UTILITY',
+                                  U5: 'COMMUNICATION FACILITY OTHER THAN TELEPHONE',
+                                  U6: 'RAILROAD - PRIVATE OWNERSHIP',
+                                  U7: 'TRANSPORTATION - PUBLIC OWNERSHIP',
+                                  U8: 'REVOCABLE CONSENT',
+                                  U9: 'MISCELLANEOUS UTILITY PROPERTY',
+                                  V0: 'ZONED RESIDENTIAL; NOT MANHATTAN',
+                                  V1: 'ZONED COMMERCIAL OR MANHATTAN RESIDENTIAL',
+                                  V2: 'ZONED COMMERCIAL ADJACENT TO CLASS 1 DWELLING: NOT MANHATTAN',
+                                  V3: 'ZONED PRIMARILY RESIDENTIAL; NOT MANHATTAN',
+                                  V4: 'POLICE OR FIRE DEPARTMENT',
+                                  V5: 'SCHOOL SITE OR YARD',
+                                  V6: 'LIBRARY, HOSPITAL OR MUSEUM',
+                                  V7: 'PORT AUTHORITY OF NEW YORK AND NEW JERSEY',
+                                  V8: 'NEW YORK STATE OR US GOVERNMENT',
+                                  V9: 'MISCELLANEOUS VACANT LAND',
+                                  W1: 'PUBLIC ELEMENTARY, JUNIOR OR SENIOR HIGH',
+                                  W2: 'PAROCHIAL SCHOOL, YESHIVA',
+                                  W3: 'SCHOOL OR ACADEMY',
+                                  W4: 'TRAINING SCHOOL',
+                                  W5: 'CITY UNIVERSITY',
+                                  W6: 'OTHER COLLEGE AND UNIVERSITY',
+                                  W7: 'THEOLOGICAL SEMINARY',
+                                  W8: 'OTHER PRIVATE SCHOOL',
+                                  W9: 'MISCELLANEOUS EDUCATIONAL FACILITY',
+                                  Y1: 'FIRE DEPARTMENT',
+                                  Y2: 'POLICE DEPARTMENT',
+                                  Y3: 'PRISON, JAIL, HOUSE OF DETENTION',
+                                  Y4: 'MILITARY AND NAVAL INSTALLATION',
+                                  Y5: 'DEPARTMENT OF REAL ESTATE',
+                                  Y6: 'DEPARTMENT OF SANITATION',
+                                  Y7: 'DEPARTMENT OF PORTS AND TERMINALS',
+                                  Y8: 'DEPARTMENT OF PUBLIC WORKS',
+                                  Y9: 'DEPARTMENT OF ENVIRONMENTAL PROTECTION',
+                                  Z0: 'TENNIS COURT, POOL, SHED, ETC.',
+                                  Z1: 'COURT HOUSE',
+                                  Z2: 'PUBLIC PARKING AREA',
+                                  Z3: 'POST OFFICE',
+                                  Z4: 'FOREIGN GOVERNMENT',
+                                  Z5: 'UNITED NATIONS',
+                                  Z7: 'EASEMENT',
+                                  Z8: 'CEMETERY',
+                                  Z9: 'OTHER MISCELLANEOUS'
+                                };
+        return buildingClasses[code] ?? 'Unknown building class ' + code;
+    }
+
+    let bcHtml = 'Not found';
+    if (buildingClassMap.size === 1) {
+        let bc = buildingClassMap.keys().next().value;
+        bcHtml = '<abbr title="' + expandBuildingClass(bc) + '">' + bc + '</abbr>'
+    } else if (buildingClassMap.size > 1) {
+        bcHtml = Array.from(buildingClassMap).map((x) => '<abbr title="' + expandBuildingClass(x[0]) + '">' + x[0] + '</abbr>' + ' (' + x[1] + ')').join(', ');
+    }
+
+    buildingClassDiv.innerHTML = '<strong>Building Class</strong> ' + bcHtml;
+}
+
 function clearIoElements() {
     addressDiv.innerHTML = '';
     binDiv.innerHTML = '';
     bblDiv.innerHTML = '';
+    buildingClassDiv.innerHTML = '';
     addressRangeList.innerHTML = '';
     infoTable.innerHTML = '';
 }
@@ -997,7 +1261,7 @@ function menuNominatimReverse(e) {
 async function httpGetJson(getUrl, name) {
     writeSearchLog('\r\n' + name + ' query ' + getUrl + '\r\n');
     let responseJson = {};
-    let errorMsg = '';    
+    let errorMsg = '';
     try {
         const response = await fetch(getUrl);
         if (!response.ok) {
@@ -1013,7 +1277,7 @@ async function httpGetJson(getUrl, name) {
             });
         }
         if (errorMsg !== '') {
-            throw new Error(errorMsg); 
+            throw new Error(errorMsg);
         }
     } catch (e) {
         writeSearchLog(' - ERROR: ' + (e.message ?? '') + '\r\n');
