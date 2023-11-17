@@ -19,6 +19,7 @@ const searchInput = document.getElementById('searchInputId');
 const addressDiv = document.getElementById('addressDivId');
 const binDiv = document.getElementById('binDivId');
 const bblDiv = document.getElementById('bblDivId');
+const hpdDiv = document.getElementById('hpdDivId');
 const buildingClassDiv = document.getElementById('buildingClassDivId');
 const addressRangeList = document.getElementById('addressRangeListId');
 const infoTable = document.getElementById('infoTableId');
@@ -111,6 +112,7 @@ async function doFootprintLatlonSearch(lat, lon) {
 }
 
 async function doBinSearch(bin) {
+    await doHpdSearch(bin);
     await doFootprintBinSearch(bin);
     await doDobJobSearch(bin);
     await doDobNowSearch(bin);
@@ -213,6 +215,54 @@ async function doFootprintBinSearch(bin) {
         writeSearchLog(' - no footprint results for this BIN\r\n');
         row = infoTable.insertRow(-1);
         row.innerHTML = '<td>none found</td>';
+    }
+}
+
+async function doHpdSearch(bin) {
+
+    const dobHpdApiQuery = 'https://data.cityofnewyork.us/resource/kj4p-ruqc.json?bin=' + bin;
+    let json = await httpGetJson(dobHpdApiQuery, '"Buildings Subject to HPD Jurisdiction"');
+    let j = json?.length ?? 0;
+    if (j > 0) {
+        if (j === 1) {
+            writeSearchLog(' - only one HPD result for this BIN\r\n');
+        } else {
+            writeSearchLog(' - ' + j + ' HPD results for this BIN, using result 0\r\n');
+        }
+        let needAddress = (addressDiv.innerHTML === '');
+        let houseNumber = '';
+        let street = '';
+        let boroCode = bin.slice(0,1);
+        let needBbl = (bblDiv.innerHTML === '');
+        let lot = '';
+        let block = '';
+
+        if (needAddress) {
+            houseNumber = json[0].housenumber ?? '';
+            street = json[0].streetname ?? '';
+            if (houseNumber !== '' && street !== '') {
+                writeSearchLog(' - showing address ' + houseNumber + ' ' + street + ', boro ' + boroCode + '\r\n');
+                writeAddress(houseNumber, street, boroCode);
+                needAddress = false;
+            }
+        }
+
+        if (needBbl) {
+            block = json[0].block ?? '';
+            lot = json[0].lot ?? '';
+            if (block !== '' && lot !== '') {
+                block = block.padStart(5, '0');
+                lot = lot.padStart(5, '0');
+                writeBbl(boroCode, block, lot);
+                writeSearchLog(' - showing BBL ' + boroCode + block + lot + '\r\n');
+                needBbl = false;
+            }
+        }
+        
+        writeHpd(json[0].buildingid);
+    } else {
+        writeSearchLog(' - no HPD results for this BIN\r\n');
+        writeHpd('');
     }
 }
 
@@ -362,13 +412,10 @@ async function doDobJobSearch(bin) {
 
             actionDate = formatDate(json[i].latest_action_date);
             buildingClass = json[i].building_class.trim();
-            //writeSearchLog('building class ' + buildingClass + '; ' + buildingClasses[buildingClass]);
-
             buildingClassMap.has(buildingClass)
             if (!buildingClassMap.has(buildingClass) || (actionDate > buildingClassMap.get(buildingClass))) {
                 buildingClassMap.set(buildingClass, actionDate);
             }
-           // writeSearchLog('bcl:' + buildingClasses.length + '\r');
 
             if (!listedJobsWithHeight.includes(json[i].job__)) {
                 row = infoTable.insertRow(-1);
@@ -583,7 +630,6 @@ async function doAddressSearch(searchText) {
             writeSearchLog(' - only one NYC GeoSearch result');
             //document.getElementById('searchLogTextareaId').style.color = 'blue';
         } else {
-            //let upperSearch = searchText.toUpperCase();
             for (let i = 0; i < geosearchResults.length; i++) {
                 geosearchResults[i].geosearch_rank = i;
                 geosearchResults[i].nycaabs_rank = i + boroMatchRank(geosearchResults[i].properties.addendum.pad.bin, searchBoroNum)
@@ -708,6 +754,14 @@ function writeInvalidBin(bin) {
 
 function writeBbl(boro, block, lot) {
     bblDiv.innerHTML = '<strong>BBL</strong> ' + boro + block + lot + ' <a href="' + constructUrlBisBrowse(boro, block) + '">Browse&nbsp;Block&nbsp;@&nbsp;BIS</a> <a href="' + constructUrlBisBrowse(boro, block, lot) + '">Browse&nbsp;BBL&nbsp;@&nbsp;BIS</a> <a href="' + constructUrlZolaLot(boro, block, lot) + '">View&nbsp;BBL&nbsp;@&nbsp;ZoLa</a>';
+}
+
+function writeHpd(hpdId) {
+    let hpdHtml = 'Not found';
+    if (hpdId !== '') {
+        hpdHtml = hpdId + ' <a href="' + constructUrlHpdId(hpdId) + '">Overview&nbsp;@&nbsp;HPD</a>';
+    }
+    hpdDiv.innerHTML = '<strong>HPD ID</strong> ' + hpdHtml;
 }
 
 function writeBuildingClass(buildingClassMap) {
@@ -941,9 +995,10 @@ function writeBuildingClass(buildingClassMap) {
         let bc = buildingClassMap.keys().next().value;
         bcHtml = '<abbr title="' + expandBuildingClass(bc) + '">' + bc + '</abbr>'
     } else if (buildingClassMap.size > 1) {
+        /* Rare but possible for a single BIN to have multiple building class codes over time, eg 4554538.
+           When this happens we'll list each followed by the most recent date it was used. */
         bcHtml = Array.from(buildingClassMap).map((x) => '<abbr title="' + expandBuildingClass(x[0]) + '">' + x[0] + '</abbr>' + ' (' + x[1] + ')').join(', ');
     }
-
     buildingClassDiv.innerHTML = '<strong>Building Class</strong> ' + bcHtml;
 }
 
@@ -951,6 +1006,7 @@ function clearIoElements() {
     addressDiv.innerHTML = '';
     binDiv.innerHTML = '';
     bblDiv.innerHTML = '';
+    hpdDiv.innerHTML = '';
     buildingClassDiv.innerHTML = '';
     addressRangeList.innerHTML = '';
     infoTable.innerHTML = '';
@@ -958,10 +1014,6 @@ function clearIoElements() {
 
 
 /* LINK FUNCTIONS */
-
-function constructUrlGoat1A(houseNumber, street, boroCode) {
-    return 'http://a030-goat.nyc.gov/goat/Function1A?borough=' + boroCode + '&street=' + encodeURIComponent(street) + '&address=' + encodeURIComponent(houseNumber);
-}
 
 function constructUrlBisBrowse(boro, block, lot) {
     let url = 'https://a810-bisweb.nyc.gov/bisweb/PropertyBrowseByBBLServlet?allborough=' + boro + '&allblock=' + block;
@@ -987,16 +1039,24 @@ function constructUrlBisProfileBin(bin) {
     return 'https://a810-bisweb.nyc.gov/bisweb/PropertyProfileOverviewServlet?bin=' + bin;
 }
 
-function constructUrlZolaLot(boro, block, lot) {
-    return 'https://zola.planning.nyc.gov/l/lot/' + boro + '/' + block + '/' + lot;
+function constructUrlGoat1A(houseNumber, street, boroCode) {
+    return 'https://a030-goat.nyc.gov/goat/Function1A?borough=' + boroCode + '&street=' + encodeURIComponent(street) + '&address=' + encodeURIComponent(houseNumber);
 }
 
 function constructUrlGoatBN(bin) {
-    return 'http://a030-goat.nyc.gov/goat/FunctionBN?bin=' + bin;
+    return 'https://a030-goat.nyc.gov/goat/FunctionBN?bin=' + bin;
+}
+
+function constructUrlHpdId(hpdId) {
+    return 'https://hpdonline.nyc.gov/hpdonline/building/' + hpdId + '/overview';
 }
 
 function constructUrlOverpassTurbo(bin) {
     return 'https://overpass-turbo.eu/?Q=%7B%7BgeocodeArea%3Anyc%7D%7D-%3E.nyc%3B%0Anwr%5B%22nycdoitt%3Abin%22~' + bin +  '%5D(area.nyc)%3B%0Aout%20geom%3B&R';
+}
+
+function constructUrlZolaLot(boro, block, lot) {
+    return 'https://zola.planning.nyc.gov/l/lot/' + boro + '/' + block + '/' + lot;
 }
 
 
