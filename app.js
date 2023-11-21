@@ -448,8 +448,8 @@ async function doDobNowSearch(bin) {
 
     let row = infoTable.insertRow(-1);
     row.className = 'rowHead';
-    row.innerHTML = '<td>DOB NOW Job</td><td>Type</td><td>Status</td><td>Date</td><td>Height</td>';
-    let dobNowJobApiQuery = 'https://data.cityofnewyork.us/resource/w9ak-ipjd.json?$select=distinct%20job_filing_number,house_no,street_name,borough,block,lot,job_type,filing_status,current_status_date,proposed_height,latitude,longitude&$where=bin=%27' + bin + '%27&$order=current_status_date'; //may eventually want to request latlon in this query, in case we don't have it from elsewhere
+    row.innerHTML = '<td>DOB NOW Job</td><td>Type</td><td>Status</td><td>Date</td><td>Height</td><td class="tdLink"><a href="javascript:void(0);" onclick="javascript:openDobNowWithText(\'' + bin + '\')">open DOB NOW w/ BIN in clipboard</a></td>';
+    let dobNowJobApiQuery = 'https://data.cityofnewyork.us/resource/w9ak-ipjd.json?$select=distinct%20job_filing_number,house_no,street_name,borough,block,lot,job_type,filing_status,current_status_date,proposed_height,latitude,longitude&$where=bin=%27' + bin + '%27&$order=current_status_date';
     let json = await httpGetJson(dobNowJobApiQuery, '"DOB NOW: Build – Job Application Filings"');
     if (json.length > 0) {
         if (json.length === 1) {
@@ -507,7 +507,7 @@ async function doDobNowSearch(bin) {
                 } else {
                     currentStatusDate = json[j-i].current_status_date.slice(0,10);
                 }
-                row.innerHTML = '<td>' + json[j-i].job_filing_number + '</td><td>' + json[j-i].job_type + '</td><td>' + shortenDobNowStatus(json[j-i].filing_status) + '</td><td>' + currentStatusDate + '</td><td>' + formatHeight(json[j-i].proposed_height) + '</td>'; //<td class="tdLink"><a href="' + constructUrlDobNowDoc(json[j-i].job_filing_number, boroCode) + '">Zoning&nbsp;Docs&nbsp;@&nbsp;DOB&nbsp;Now</a></td>';
+                row.innerHTML = '<td>' + json[j-i].job_filing_number + '</td><td>' + json[j-i].job_type + '</td><td>' + shortenDobNowStatus(json[j-i].filing_status) + '</td><td>' + currentStatusDate + '</td><td>' + formatHeight(json[j-i].proposed_height) + '</td><td class="tdLink"><a href="javascript:void(0);" onclick="javascript:openDobNowWithText(\'' + json[j-i].job_filing_number + '\')">open DOB NOW w/ job in clipboard</a></td>';                
             }
         }
     } else {
@@ -1039,6 +1039,10 @@ function constructUrlBisProfileBin(bin) {
     return 'https://a810-bisweb.nyc.gov/bisweb/PropertyProfileOverviewServlet?bin=' + bin;
 }
 
+function constructUrlDobNow() {
+    return 'https://a810-dobnow.nyc.gov/publish/Index.html#!/';
+}
+
 function constructUrlGoat1A(houseNumber, street, boroCode) {
     return 'https://a030-goat.nyc.gov/goat/Function1A?borough=' + boroCode + '&street=' + encodeURIComponent(street) + '&address=' + encodeURIComponent(houseNumber);
 }
@@ -1059,6 +1063,10 @@ function constructUrlZolaLot(boro, block, lot) {
     return 'https://zola.planning.nyc.gov/l/lot/' + boro + '/' + block + '/' + lot;
 }
 
+async function openDobNowWithText(text) {
+    await navigator.clipboard.writeText(text);
+    window.open('https://a810-dobnow.nyc.gov/publish/#!/', 'dobNowTab-' + text);
+}
 
 /* FOOTPRINT FUNCTIONS */
 
