@@ -1226,6 +1226,9 @@ function slippyMapInit() {
                              text: 'Edit at OSM (iD)',
                              callback: menuOsmEdit
                            }, {
+                             text: 'Edit in RapiD',
+                             callback: menuRapidEdit
+                           }, {
                              text: 'Edit in JOSM',
                              callback: menuJosmEdit
                            }, '-', {
@@ -1297,6 +1300,10 @@ function menuOsmView(e) {
 
 function menuOsmEdit(e) {
     window.open('https://www.openstreetmap.org/edit#map=19/' + e.latlng.lat + '/' + e.latlng.lng, '_blank');
+}
+
+function menuRapidEdit(e) {
+    window.open('https://rapideditor.org/edit#map=19/' + e.latlng.lat + '/' + e.latlng.lng, '_blank');
 }
 
 function menuJosmEdit(e) {
