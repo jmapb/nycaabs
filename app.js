@@ -112,7 +112,7 @@ async function doFootprintLatlonSearch(lat, lon) {
 }
 
 async function doBinSearch(bin) {
-    await doHpdSearch(bin);
+    doHpdSearch(bin);
     await doFootprintBinSearch(bin);
     await doDobJobSearch(bin);
     await doDobNowSearch(bin);
@@ -219,7 +219,6 @@ async function doFootprintBinSearch(bin) {
 }
 
 async function doHpdSearch(bin) {
-
     const dobHpdApiQuery = 'https://data.cityofnewyork.us/resource/kj4p-ruqc.json?bin=' + bin;
     let json = await httpGetJson(dobHpdApiQuery, '"Buildings Subject to HPD Jurisdiction"');
     let j = json?.length ?? 0;
@@ -258,7 +257,7 @@ async function doHpdSearch(bin) {
                 needBbl = false;
             }
         }
-        
+
         writeHpd(json[0].buildingid);
     } else {
         writeSearchLog(' - no HPD results for this BIN\r\n');
@@ -268,15 +267,17 @@ async function doHpdSearch(bin) {
 
 async function doDobJobSearch(bin) {
 
-    function dobJobSortRank(type, date, height) {
-        /* Ideally I want the top sort entry to be the same job you'd get if you searched this BIN in
-        BIS -- because that's the job that usually links to the zoning documents. My working theory is
-        that BIS will return the newest NB (new building) job, and if no NB job is on record, then the
-        newest A1, then A2, then A3 (various levels of building alterations) and after that who knows.
-        So that's what this sort rank does. I have my doubts that this approach will work every time,
-        but I haven't found any counterexamples yet. (Please report if found!)
-
-        ***** TODO -- non-rejected plan should be sorted above rejected plan, see BIN 3049330 *****
+    function dobJobSortRank(type, jobStatus, date, height) {
+        /* Ideally I want the top sort entry to be the same job you'd get if you searched this BIN
+        in BIS -- because that's the job that usually links to the current zoning documents. Users
+        can then simply use the top-ranked "Zoning Docs @ BIS" link to look for the zoning docs,
+        using only one request to the BIS server.
+        My working theory is that BIS will return the newest non-rejected (status !== 'J') type NB
+        (new building) job, and if no NB job is on record, then the newest A1, then A2, then A3
+        (various levels of building alterations) and after that who knows. So that's approximately
+        what this sort rank does.
+        I have my doubts that this approach will work every time, but I don't know of any
+        counterexamples at the moment. (Please report if found!)
 
         The full list of DOB job types (taken from BIS's JobsQueryByLocationServlet page) is:
           A1 - ALTERATION TYPE 1
@@ -292,7 +293,7 @@ async function doDobJobSearch(bin) {
           SU - SUBDIVISION - UNIMPROVED
         */
         const jobTypes = ['A3', 'A2', 'A1', 'NB'];
-        return parseInt((String(jobTypes.indexOf(type) + 2) + date.slice(0,4) + date.slice(5,7) + date.slice(8,10)) * 1000000000) + Math.round(height * 1000);
+        return parseInt((String(jobTypes.indexOf(type) + ((jobStatus == 'J') ? 1 : 6)) + date.slice(0,4) + date.slice(5,7) + date.slice(8,10)) * 1000000000) + Math.round(height * 1000);
     }
 
     function expandJobType(code) {
@@ -378,7 +379,7 @@ async function doDobJobSearch(bin) {
         } else {
             writeSearchLog(' - ' + j + ' DOB Job Application results for this BIN\r\n');
         }
-        json.sort(function(a, b) { return dobJobSortRank(b.job_type, formatDate(b.latest_action_date), b.proposed_height) - dobJobSortRank(a.job_type, formatDate(a.latest_action_date), a.proposed_height); });
+        json.sort(function(a, b) { return dobJobSortRank(b.job_type, b.job_status, formatDate(b.latest_action_date), b.proposed_height) - dobJobSortRank(a.job_type, a.job_status, formatDate(a.latest_action_date), a.proposed_height); });
         const listedJobsWithHeight = [];
         let addedRowCount = 0;
         for (let i = 0; i < j; i++) {
@@ -507,7 +508,7 @@ async function doDobNowSearch(bin) {
                 } else {
                     currentStatusDate = json[j-i].current_status_date.slice(0,10);
                 }
-                row.innerHTML = '<td>' + json[j-i].job_filing_number + '</td><td>' + json[j-i].job_type + '</td><td>' + shortenDobNowStatus(json[j-i].filing_status) + '</td><td>' + currentStatusDate + '</td><td>' + formatHeight(json[j-i].proposed_height) + '</td><td class="tdLink"><a href="javascript:void(0);" onclick="javascript:openDobNowWithText(\'' + json[j-i].job_filing_number + '\')">open DOB NOW w/ job in clipboard</a></td>';                
+                row.innerHTML = '<td>' + json[j-i].job_filing_number + '</td><td>' + json[j-i].job_type + '</td><td>' + shortenDobNowStatus(json[j-i].filing_status) + '</td><td>' + currentStatusDate + '</td><td>' + formatHeight(json[j-i].proposed_height) + '</td><td class="tdLink"><a href="javascript:void(0);" onclick="javascript:openDobNowWithText(\'' + json[j-i].job_filing_number + '\')">open DOB NOW w/ job in clipboard</a></td>';
             }
         }
     } else {
