@@ -409,7 +409,6 @@ async function doDobJobSearch(bin) {
 
             actionDate = formatDate(json[i].latest_action_date);
             buildingClass = json[i].building_class.trim();
-            buildingClassMap.has(buildingClass)
             if (!buildingClassMap.has(buildingClass) || (actionDate > buildingClassMap.get(buildingClass))) {
                 buildingClassMap.set(buildingClass, actionDate);
             }
