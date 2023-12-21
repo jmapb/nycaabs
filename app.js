@@ -337,16 +337,12 @@ async function doDobJobSearch(bin) {
     }
 
     function formatDate(input) {
-        /* Dates in the city's DOB job dataset are almost all mm-dd-yyyy but there are a few yyyy-mm-dd thrown in
-           there just to make things fun. */
+        /* Dates in the city's DOB job dataset are almost all mm/dd/yyyy but there are a few yyyy-mm-dd thrown in
+           there just to make things fun, BIN 4097171 eg */
         input = input.trim();
         let matches = input.match(/^(\d\d)\D(\d\d)\D(\d\d\d\d)/);
         if (matches !== null) {
             return matches[3] + '-' + matches[1] + '-' + matches[2];
-        }
-        matches = input.match(/^(\d\d\d\d)\D(\d\d)\D(\d\d)/);
-        if (matches !== null) {
-            return matches[1] + '-' + matches[2] + '-' + matches[3];
         }
         return input;
     }
