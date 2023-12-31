@@ -1,12 +1,10 @@
 /* TODO -
 
  - Add noscript message
- - Populate addressRangeList (not sure if this is worth doing without the full address range data from GOAT.)
+ - Populate addressRangeList (not sure if this is worth doing without the full address range data from Geosupport.)
  - Expand "Blvd" (maybe also "Blvd."?) before search ("213-03 NORTHERN blvd" gives wrong result)
- - Query for HPD ID & link to HPD portal
+ - Links to NY state offering plan search
  - 855 Clarkson Brooklyn
- -         ***** TODO -- non-rejected plan should be sorted above rejected plan, see BIN 3049330 on line 263*****
-
 
  "1745 Forest Avenue, Staten Island, New York 10302" vs "1745 Forest Avenue"??????
 
@@ -25,11 +23,13 @@ const addressRangeList = document.getElementById('addressRangeListId');
 const infoTable = document.getElementById('infoTableId');
 const bblRegex = /^([1-5])([0-9]{5})([0-9]{4})$/;
 const latlonRegex = /^\s*([0-9\.]+)[\s,;]+(\-[0-9\.]+)\s*$/;
+const urlDobNow = 'https://a810-dobnow.nyc.gov/publish/#!/';
 const boros = ['Manhattan', 'Bronx', 'Brooklyn', 'Queens', 'Staten Island'];
 var slippyMap = null;
 var markerLatLon = null;
 var footprintJson = [];
 var footprintDrawn = false;
+var bin = '';
 
 const params = (new URL(document.location)).searchParams;
 const paramSearch = params.get('search');
@@ -62,6 +62,7 @@ async function doSearch(addToHistory = true) {
     markerLatLon = null;
     footprintJson = [];
     footprintDrawn = false;
+    bin = '';
     if (addToHistory) {
         history.pushState({search: searchText}, '', window.location.href.split(/[?#]/)[0] + '?search=' + encodeURIComponent(searchText));
     }
@@ -111,14 +112,15 @@ async function doFootprintLatlonSearch(lat, lon) {
     }
 }
 
-async function doBinSearch(bin) {
-    doHpdSearch(bin);
-    await doFootprintBinSearch(bin);
-    await doDobJobSearch(bin);
-    await doDobNowSearch(bin);
+async function doBinSearch(searchBin) {
+    bin = searchBin;
+    doHpdSearch();
+    await doFootprintBinSearch();
+    await doDobJobSearch();
+    await doDobNowSearch();
 }
 
-async function doFootprintBinSearch(bin) {
+async function doFootprintBinSearch() {
 
     function footprintFeatureText(featureCode) {
         //Codes taken from https://github.com/CityOfNewYork/nyc-geo-metadata/blob/master/Metadata/Metadata_BuildingFootprints.md and https://github.com/CityOfNewYork/nyc-planimetrics/blob/master/Capture_Rules.md#building-footprint
@@ -218,7 +220,7 @@ async function doFootprintBinSearch(bin) {
     }
 }
 
-async function doHpdSearch(bin) {
+async function doHpdSearch() {
     const dobHpdApiQuery = 'https://data.cityofnewyork.us/resource/kj4p-ruqc.json?bin=' + bin;
     let json = await httpGetJson(dobHpdApiQuery, '"Buildings Subject to HPD Jurisdiction"');
     let j = json?.length ?? 0;
@@ -265,13 +267,14 @@ async function doHpdSearch(bin) {
     }
 }
 
-async function doDobJobSearch(bin) {
+async function doDobJobSearch() {
 
     function dobJobSortRank(type, jobStatus, date, height) {
         /* Ideally I want the top sort entry to be the same job you'd get if you searched this BIN
         in BIS -- because that's the job that usually links to the current zoning documents. Users
         can then simply use the top-ranked "Zoning Docs @ BIS" link to look for the zoning docs,
-        using only one request to the BIS server.
+        using only one request to the BIS server. (Note that there's no guarantee that BIS will have
+        any zoning docs on offer, even if we pick the "right" job number.)
         My working theory is that BIS will return the newest non-rejected (status !== 'J') type NB
         (new building) job, and if no NB job is on record, then the newest A1, then A2, then A3
         (various levels of building alterations) and after that who knows. So that's approximately
@@ -431,21 +434,24 @@ async function doDobJobSearch(bin) {
     writeBuildingClass(buildingClassMap);
 }
 
-async function doDobNowSearch(bin) {
+async function doDobNowSearch() {
 
     function shortenDobNowStatus(dobNowStatus) {
         let j = dobNowStatus.indexOf(' -');
         if (j > 2) {
             return dobNowStatus.slice(0,j);
         }
-        return dobNowStatus.replace('Certificate of Operation', 'C of O');
+        return dobNowStatus.replace('Certificate of Operation', 'Cert of Op');
         //check ?search=40.64242407021607 -73.98076415061952 for another lengthy status
     }
 
     let row = infoTable.insertRow(-1);
     row.className = 'rowHead';
-    row.innerHTML = '<td>DOB NOW Job</td><td>Type</td><td>Status</td><td>Date</td><td>Height</td><td class="tdLink"><a href="javascript:void(0);" onclick="javascript:openDobNowWithText(\'' + bin + '\')">open DOB NOW w/ BIN in clipboard</a></td>';
-    let dobNowJobApiQuery = 'https://data.cityofnewyork.us/resource/w9ak-ipjd.json?$select=distinct%20job_filing_number,house_no,street_name,borough,block,lot,job_type,filing_status,current_status_date,proposed_height,latitude,longitude&$where=bin=%27' + bin + '%27&$order=current_status_date';
+    row.innerHTML = '<td>DOB NOW Job</td><td>Type</td><td>Status</td><td>Date</td><td>Height</td><td id="dobNowLink" class="tdLink" id="dobNowLink"><a href="' + urlDobNow + '">open DOB NOW w/ BIN in clipboard</a></td>';
+    const dobNowLink = document.getElementById('dobNowLink');
+    dobNowLink.addEventListener('mouseup', handleDobNowLinkEvents, {capture: true});
+    dobNowLink.addEventListener('click', handleDobNowLinkEvents, {capture: true});
+    const dobNowJobApiQuery = 'https://data.cityofnewyork.us/resource/w9ak-ipjd.json?$select=distinct%20job_filing_number,house_no,street_name,borough,block,lot,job_type,filing_status,current_status_date,proposed_height,latitude,longitude&$where=bin=%27' + bin + '%27&$order=current_status_date';
     let json = await httpGetJson(dobNowJobApiQuery, '"DOB NOW: Build – Job Application Filings"');
     if (json.length > 0) {
         if (json.length === 1) {
@@ -503,7 +509,7 @@ async function doDobNowSearch(bin) {
                 } else {
                     currentStatusDate = json[j-i].current_status_date.slice(0,10);
                 }
-                row.innerHTML = '<td>' + json[j-i].job_filing_number + '</td><td>' + json[j-i].job_type + '</td><td>' + shortenDobNowStatus(json[j-i].filing_status) + '</td><td>' + currentStatusDate + '</td><td>' + formatHeight(json[j-i].proposed_height) + '</td><td class="tdLink"><a href="javascript:void(0);" onclick="javascript:openDobNowWithText(\'' + json[j-i].job_filing_number + '\')">open DOB NOW w/ job in clipboard</a></td>';
+                row.innerHTML = '<td>' + json[j-i].job_filing_number + '</td><td>' + json[j-i].job_type + '</td><td>' + shortenDobNowStatus(json[j-i].filing_status) + '</td><td>' + currentStatusDate + '</td><td>' + formatHeight(json[j-i].proposed_height) + '</td>';
             }
         }
     } else {
@@ -597,7 +603,7 @@ async function doAddressSearch(searchText) {
     let searchStreet = parsedAddress.street ?? '';
     let searchHouseNumber = parsedAddress.housenumber ?? '';
 
-    //To-do if parseNycAddress() gives us street and boro, attempt a Geoservice search (if we have a key cookie)
+    //To-do if parseNycAddress() gives us street and boro, attempt a Geoservice search.
     //If Geoservice fails us, fall back to NYC GeoSearch
 
     const nycGeosearchApiQuery = 'https://geosearch.planninglabs.nyc/v2/search?text=' + encodeURIComponent(searchText);
@@ -641,8 +647,8 @@ async function doAddressSearch(searchText) {
             }
         }
 
-        let bin = geosearchResults[0]?.properties?.addendum?.pad?.bin ?? '';
-        let boroCode = bin.slice(0,1);
+        let gsBin = geosearchResults[0]?.properties?.addendum?.pad?.bin ?? '';
+        let boroCode = gsBin.slice(0,1);
         if (boroCode === searchBoroNum.toString()) {
             writeSearchLog(', matches search boro\r\n');
         } else {
@@ -705,13 +711,13 @@ async function doAddressSearch(searchText) {
             writeBbl(reMatch[1], reMatch[2], reMatch[3]);
         }
 
-        if (validBin(bin)) {
-            writeSearchLog(' - showing BIN ' + bin + '\r\n');
-            writeBin(bin);
-            await doBinSearch(bin);
+        if (validBin(gsBin)) {
+            writeSearchLog(' - showing BIN ' + gsBin + '\r\n');
+            writeBin(gsBin);
+            await doBinSearch(gsBin);
         } else {
-            writeSearchLog(' - showing invalid BIN ' + bin + ', deeper search impossible without a valid BIN\r\n');
-            writeInvalidBin(bin);
+            writeSearchLog(' - showing invalid BIN ' + gsBin + ', deeper search impossible without a valid BIN\r\n');
+            writeInvalidBin(gsBin);
         }
         if (((geosearchResults[0]?.geometry?.coordinates[0] ?? 0) < -73) && ((geosearchResults[0]?.geometry?.coordinates[1] ?? 0) > 40)) {
             markerLatLon = [geosearchResults[0].geometry.coordinates[1], geosearchResults[0].geometry.coordinates[0]];
@@ -740,12 +746,12 @@ function writeFailedAddress() {
     addressDiv.innerHTML = '<strong>Address</strong> Not found';
 }
 
-function writeBin(bin) {
-    binDiv.innerHTML = '<strong>BIN</strong> ' + bin + ' <a href="' + constructUrlBisProfileBin(bin) + '">Property&nbsp;Profile&nbsp;@&nbsp;BIS</a> <a href="' + constructUrlGoatBN(bin) + '">Search&nbsp;BIN&nbsp;@&nbsp;GOAT</a> <a href="' + constructUrlOverpassTurbo(bin) + '">Search&nbsp;BIN&nbsp;@&nbsp;Overpass&nbsp;Turbo</a>';
+function writeBin(wBin) {
+    binDiv.innerHTML = '<strong>BIN</strong> ' + wBin + ' <a href="' + constructUrlBisProfileBin(wBin) + '">Property&nbsp;Profile&nbsp;@&nbsp;BIS</a> <a href="' + constructUrlGoatBN(wBin) + '">Search&nbsp;BIN&nbsp;@&nbsp;GOAT</a> <a href="' + constructUrlOverpassTurbo(wBin) + '">Search&nbsp;BIN&nbsp;@&nbsp;Overpass&nbsp;Turbo</a>';
 }
 
-function writeInvalidBin(bin) {
-    binDiv.innerHTML = '<strong>BIN</strong> ' + bin + ' (invalid, search halted)';
+function writeInvalidBin(wBin) {
+    binDiv.innerHTML = '<strong>BIN</strong> ' + wBin + ' (invalid, search halted)';
 }
 
 function writeBbl(boro, block, lot) {
@@ -1005,6 +1011,11 @@ function clearIoElements() {
     hpdDiv.innerHTML = '';
     buildingClassDiv.innerHTML = '';
     addressRangeList.innerHTML = '';
+    const dobNowLink = document.getElementById('dobNowLink');
+    if (dobNowLink) {
+        dobNowLink.removeEventListener('mouseup', handleDobNowLinkEvents, {capture: true});
+        dobNowLink.removeEventListener('click', handleDobNowLinkEvents, {capture: true});
+    }
     infoTable.innerHTML = '';
 }
 
@@ -1019,8 +1030,8 @@ function constructUrlBisBrowse(boro, block, lot) {
     return url;
 }
 
-function constructUrlBisJobs(bin, filler) {
-    let url = 'https://a810-bisweb.nyc.gov/bisweb/JobsQueryByLocationServlet?allbin=' + bin;
+function constructUrlBisJobs(cBin, filler) {
+    let url = 'https://a810-bisweb.nyc.gov/bisweb/JobsQueryByLocationServlet?allbin=' + cBin;
     if (typeof filler !== 'undefined') {
         url += '&fillerdata=' + filler;
     }
@@ -1031,42 +1042,44 @@ function constructUrlBisProfileAddress(houseNumber, street, boroCode) {
     return 'https://a810-bisweb.nyc.gov/bisweb/PropertyProfileOverviewServlet?boro=' + boroCode + '&houseno=' + encodeURIComponent(houseNumber) + '&street=' + encodeURIComponent(street);
 }
 
-function constructUrlBisProfileBin(bin) {
-    return 'https://a810-bisweb.nyc.gov/bisweb/PropertyProfileOverviewServlet?bin=' + bin;
-}
-
-function constructUrlDobNow() {
-    return 'https://a810-dobnow.nyc.gov/publish/Index.html#!/';
+function constructUrlBisProfileBin(cBin) {
+    return 'https://a810-bisweb.nyc.gov/bisweb/PropertyProfileOverviewServlet?bin=' + cBin;
 }
 
 function constructUrlGoat1A(houseNumber, street, boroCode) {
     return 'https://a030-goat.nyc.gov/goat/Function1A?borough=' + boroCode + '&street=' + encodeURIComponent(street) + '&address=' + encodeURIComponent(houseNumber);
 }
 
-function constructUrlGoatBN(bin) {
-    return 'https://a030-goat.nyc.gov/goat/FunctionBN?bin=' + bin;
+function constructUrlGoatBN(cBin) {
+    return 'https://a030-goat.nyc.gov/goat/FunctionBN?bin=' + cBin;
 }
 
 function constructUrlHpdId(hpdId) {
     return 'https://hpdonline.nyc.gov/hpdonline/building/' + hpdId + '/overview';
 }
 
-function constructUrlOverpassTurbo(bin) {
-    return 'https://overpass-turbo.eu/?Q=%7B%7BgeocodeArea%3Anyc%7D%7D-%3E.nyc%3B%0Anwr%5B%22nycdoitt%3Abin%22~' + bin +  '%5D(area.nyc)%3B%0Aout%20geom%3B&R';
+function constructUrlOverpassTurbo(cBin) {
+    return 'https://overpass-turbo.eu/?Q=%7B%7BgeocodeArea%3Anyc%7D%7D-%3E.nyc%3B%0Anwr%5B%22nycdoitt%3Abin%22~' + cBin +  '%5D(area.nyc)%3B%0Aout%20geom%3B&R';
 }
 
 function constructUrlZolaLot(boro, block, lot) {
     return 'https://zola.planning.nyc.gov/l/lot/' + boro + '/' + block + '/' + lot;
 }
 
-async function openDobNowWithText(text) {
-    await navigator.clipboard.writeText(text);
-    window.open('https://a810-dobnow.nyc.gov/publish/#!/', 'dobNowTab-' + text);
+async function handleDobNowLinkEvents(e) {
+    e.preventDefault();
+    if ((e.type === 'click') || ((e.button ?? 0) === 1)) {
+        await navigator.clipboard.writeText(bin);
+        if (e.type === 'click') {
+            window.open(urlDobNow, 'dobNowTab-' + bin);
+        }
+    }
 }
+
 
 /* FOOTPRINT FUNCTIONS */
 
-function processFootprint(footprintIndex, bin, heightInMeters) {
+function processFootprint(footprintIndex, footprintBin, heightInMeters) {
     /* Digest a downloaded building footprint and add our own custom properties: A bounding box, an
     OSM XML representation of the footprint, and, for single-polygon buildings, a JOSM "add_way"
     remote control command. */
@@ -1097,7 +1110,7 @@ function processFootprint(footprintIndex, bin, heightInMeters) {
     let nodeKey = '';
     const nodes = {};
     const tags = {building: 'yes'};
-    tags['nycdoitt:bin'] = bin;
+    tags['nycdoitt:bin'] = footprintBin;
     if (heightInMeters !== '') {
         tags['height'] = heightInMeters;
     }
@@ -1130,7 +1143,7 @@ function processFootprint(footprintIndex, bin, heightInMeters) {
     single-polygon footprints we'll use "add_way" because it has some advantages:
      - It only adds new nodes if neccessary, so JOSM will re-use any already loaded nodes at the
        same coordinates. This is convenient for connecting new footprints to previously-imported
-       abbuting footprints. Rarely it might also result in the new footprint connecting to non-
+       abuting footprints. Rarely it might also result in the new footprint connecting to non-
        building nodes, which could be problematic, but on balance this is still desired behavior.
        (In theory we could achieve similar behavior from "load_data" with a preliminary OSM API
        "map?bbox" call, swapping in the IDs of any existing nodes at the same locations.  Possibly
@@ -1172,7 +1185,7 @@ function processFootprint(footprintIndex, bin, heightInMeters) {
 
 async function sendFootprintToJosm(footprintIndex) {
     //First, send a "load_and_zoom" command for surrounding context
-    let loadAndZoomUrl = 'http://localhost:8111/load_and_zoom?left=' + (footprintJson[footprintIndex].nycaabs_bbox_left - 0.0005) + '&right=' + (footprintJson[footprintIndex].nycaabs_bbox_right+ 0.0005) + '&top=' + (footprintJson[footprintIndex].nycaabs_bbox_top + 0.0004) + '&bottom=' + (footprintJson[footprintIndex].nycaabs_bbox_bottom - 0.0004);
+    let loadAndZoomUrl = 'http://localhost:8111/load_and_zoom?left=' + (footprintJson[footprintIndex].nycaabs_bbox_left - 0.0005) + '&right=' + (footprintJson[footprintIndex].nycaabs_bbox_right + 0.0005) + '&top=' + (footprintJson[footprintIndex].nycaabs_bbox_top + 0.0004) + '&bottom=' + (footprintJson[footprintIndex].nycaabs_bbox_bottom - 0.0004);
     writeSearchLog('\r\nJOSM remote control command ' + loadAndZoomUrl + '\r\n');
     await fetch(loadAndZoomUrl);
 
@@ -1279,7 +1292,7 @@ function slippyMapAddMarker(latlon) {
 }
 
 function slippyMapAddTileLayer() {
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'}).addTo(slippyMap);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {maxZoom: 19, attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'}).addTo(slippyMap);
 }
 
 
@@ -1386,8 +1399,8 @@ async function httpJosmRemoteControl(josmCommand) {
 /* MISC FUNCTIONS */
 //some of these might be better moved inside the relevant search functions
 
-function validBin(bin) {
-    const reMatch = bin.match(/^[1-5]([0-9]{6})$/);
+function validBin(testBin) {
+    const reMatch = testBin.match(/^[1-5]([0-9]{6})$/);
     return (reMatch !== null) && (reMatch[1] !== '000000');
 }
 
