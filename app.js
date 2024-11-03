@@ -101,7 +101,7 @@ async function doFootprintLatlonSearch(lat, lon) {
 
 //    const latLonApiQuery = 'https://data.cityofnewyork.us/api/geospatial/7w4b-tj9d?lat=' + lat + '&lng=' + lon + '&zoom=17';
     const latLonApiQuery = 'https://data.cityofnewyork.us/api/geospatial/qb5r-6dgf?lat=' + lat + '&lng=' + lon + '&zoom=17';
-    let fpJson = await httpGetJson(latLonApiQuery, '"Building Footprints" latlon query ');
+    let fpJson = await httpGetJson(latLonApiQuery, '"Building Footprints" latlon');
     if (fpJson.length > 0) {
         const latlonBin = fpJson[0].bin;
         if (validBin(latlonBin)) {
@@ -1246,6 +1246,9 @@ function slippyMapInit() {
                            }, {
                              text: 'Bing Streetside imagery',
                              callback: menuBingStreetside
+                           }, {
+                             text: 'KartaView imagery',
+                             callback: menuKartaView
                            }]
                           });
     } else {
@@ -1325,6 +1328,18 @@ function menuCyclomedia(e) {
 
 function menuBingStreetside(e) {
     window.open('https://www.bing.com/maps?style=x&cp=' + e.latlng.lat + '~' + e.latlng.lng, '_blank');
+}
+
+async function menuKartaView(e) {
+    const kvApiQuery = 'https://api.openstreetcam.org/2.0/photo/?lat=' + e.latlng.lat + '&lng=' + e.latlng.lng + '&zoomLevel=16&join=sequence&orderBy=id&orderDirection=desc';
+    let kvJson = await httpGetJson(kvApiQuery, '"KartaView" latlon');
+    let trackId = kvJson?.result?.data[0]?.sequence?.id ?? 0;
+    let photoId = kvJson?.result?.data[0]?.sequenceIndex ?? 0;
+    if (trackId > 0 && photoId > 0) { 
+        window.open('https://kartaview.org/details/' + trackId + '/' + photoId + '/track-info', '_blank');
+    } else {
+        window.alert('no KartaView imagery found for this location')
+    }
 }
 
 function menuOsmFeatureQuery(e) {
