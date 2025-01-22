@@ -3,12 +3,16 @@
  - Add noscript message
  - Populate addressRangeList (not sure if this is worth doing without the full address range data from Geosupport.)
  - Expand "Blvd" (maybe also "Blvd."?) before search ("213-03 NORTHERN blvd" gives wrong result)
+ - If no housenumber match is found in geosearch, look for address matches in DOB NOW data
+ - Zoom to BBL (or just BB?) if no latlon found
  - Links to NY state offering plan search
  - 855 Clarkson Brooklyn
 
  "1745 Forest Avenue, Staten Island, New York 10302" vs "1745 Forest Avenue"??????
 
  BIN 3428826, 3337899, 3425581  -- examples where DOB has correct building height, height listed with footprint is much higher
+ 
+ https://a836-acris.nyc.gov/DS/DocumentSearch/DocumentDetail?doc_id=2014082101390003 ownership search
 */
 
 document.getElementById('searchInputId').addEventListener('keyup', checkSearchKey);
@@ -98,9 +102,7 @@ async function doSearch(addToHistory = true) {
 
 async function doFootprintLatlonSearch(lat, lon) {
     markerLatLon = [lat, lon];
-
-//    const latLonApiQuery = 'https://data.cityofnewyork.us/api/geospatial/7w4b-tj9d?lat=' + lat + '&lng=' + lon + '&zoom=17';
-    const latLonApiQuery = 'https://data.cityofnewyork.us/api/geospatial/qb5r-6dgf?lat=' + lat + '&lng=' + lon + '&zoom=17';
+    const latLonApiQuery = 'https://data.cityofnewyork.us/api/geospatial/5zhs-2jue?lat=' + lat + '&lng=' + lon + '&zoom=17';
     let fpJson = await httpGetJson(latLonApiQuery, '"Building Footprints" latlon');
     if (fpJson.length > 0) {
         const latlonBin = fpJson[0].bin;
@@ -142,18 +144,19 @@ async function doFootprintBinSearch() {
     row.className = 'rowHead';
     row.innerHTML = '<td>Footprint</td><td>Yr Built</td><td>Status</td><td>Date</td><td>Height</td>';
 
-    const buildingFootprintApiQuery = 'https://data.cityofnewyork.us/resource/qb5r-6dgf.json?bin=' + bin;
+    const buildingFootprintApiQuery = 'https://data.cityofnewyork.us/resource/5zhs-2jue.json?bin=' + bin;
     footprintJson = await httpGetJson(buildingFootprintApiQuery, '"Building Footprint" BIN');
     if ((footprintJson[0]?.the_geom?.type ?? '') !== 'MultiPolygon') {
-        /* Occasionally, the city's building footprints API (https://data.cityofnewyork.us/resource/qb5r-6dgf.json,
-        documented at https://data.cityofnewyork.us/Housing-Development/Building-Footprints/nqwf-w8eh as the
-        "building" endpoint) temporarily switches places with the building center points API
-        (https://data.cityofnewyork.us/resource/7w4b-tj9d.json, documented as the "building_p" endpoint). Not sure
-        what triggers this, but it happens enough that we need to automatically fall back on the "building_p" API
-        for footprint geometry if no multipolygon is found in the "building" query. (These datasets describe all
-        footprints as "MultiPolygon" even if they're just simple polygons.)
+        /* NYC's building footprints API endpoint (https://data.cityofnewyork.us/resource/5zhs-2jue.json)
+        has been known to temporarily switch places with the building center points API endpoint
+        (https://data.cityofnewyork.us/resource/u9wf-3gbt.json). If this happens, a footprint search by
+        BIN will only return point geometry instead of a multipolygon. (All footprints are recorded as 
+        "MultiPolygon" in the city data, even if they're just simple polygons.)
+        
+        If the returned geometry contains no multipolygons, we'll try the search again using the building
+        center points API instead.
         */
-        const buildingPointApiQuery = 'https://data.cityofnewyork.us/resource/7w4b-tj9d.json?bin=' + bin;
+        const buildingPointApiQuery = 'https://data.cityofnewyork.us/resource/u9wf-3gbt.json?bin=' + bin;
         footprintJson = await httpGetJson(buildingPointApiQuery, 'Did not get a footprint, trying "Building Point" BIN');
     }
     if (footprintJson.length > 0) {
