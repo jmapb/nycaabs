@@ -11,7 +11,7 @@ The Github main branch is hosted at https://jmapb.github.io/nycaabs/. Nycaabs ca
 <h3>Dependencies:</h3>
 
  * **NYC Geosearch** API (https://geosearch.planninglabs.nyc)
- * **NYC Building Footprints** dataset (https://data.cityofnewyork.us/Housing-Development/Building-Footprints/nqwf-w8eh)
+ * **NYC Building Footprints** dataset (https://data.cityofnewyork.us/City-Government/Building-Footprints/5zhs-2jue)
  * **NYC DOB Job Application Filings** dataset (https://data.cityofnewyork.us/Housing-Development/DOB-Job-Application-Filings/ic3t-wcy2)
  * **NYC DOB NOW: Build – Approved Permits** dataset (https://data.cityofnewyork.us/Housing-Development/DOB-NOW-Build-Approved-Permits/rbx6-tga4)
  * **Buildings Subject to HPD Jurisdiction** dataset (https://data.cityofnewyork.us/Housing-Development/Buildings-Subject-to-HPD-Jurisdiction/kj4p-ruqc)
