@@ -196,12 +196,12 @@ async function doFootprintBinSearch() {
 
             row = infoTable.insertRow(-1);
             row.className = 'rowBg' + (i % 2);
-            if (typeof footprintJson[i].heightroof === 'undefined') {
+            if (typeof footprintJson[i].height_roof === 'undefined') {
                 heightInMeters = '';
                 formattedHeight = '?';
             } else {
-                heightInMeters = feetToMeters(footprintJson[i].heightroof);
-                formattedHeight = formatHeight(footprintJson[i].heightroof, heightInMeters);
+                heightInMeters = feetToMeters(footprintJson[i].height_roof);
+                formattedHeight = formatHeight(footprintJson[i].height_roof, heightInMeters);
             }
 
             footprintLinks = '';
@@ -214,7 +214,7 @@ async function doFootprintBinSearch() {
                 //load this, though it only works as an imagery layer, not importable data.
             }
 
-            row.innerHTML = '<td>' + footprintFeatureText(footprintJson[i].feat_code) + '</td><td>' + (footprintJson[i].cnstrct_yr ?? '?') + '</td><td>' + footprintJson[i].lststatype + '</td><td>' + footprintJson[i].lstmoddate.slice(0,10) + '</td><td>' + formattedHeight + '</td><td class="tdLink">' + footprintLinks + '</td>';
+            row.innerHTML = '<td>' + footprintFeatureText(footprintJson[i].feature_code) + '</td><td>' + (footprintJson[i].construction_year ?? '?') + '</td><td>' + footprintJson[i].last_status_type + '</td><td>' + footprintJson[i].last_edited_date.slice(0,10) + '</td><td>' + formattedHeight + '</td><td class="tdLink">' + footprintLinks + '</td>';
         }
     } else {
         writeSearchLog(' - no footprint results for this BIN\r\n');
@@ -682,9 +682,9 @@ async function doAddressSearch(searchText) {
         If we could get decent results from the NYC Planning Geoservice API, we probably
         wouldn't even need to sort or further examine the NYC GeoSearch results. (Curse these
         very similar names!) However, access to NYC Planning Geoservice requires registration
-        and department approval, and will only work with a city-issued private API key. This app
-        is currently being hosted on github.io, though, so keeping the API key private isn't
-        possible.
+        and department approval, and will only work with a city-issued private API key. Since
+        this app currently uses client-side fetches for all API calls, keeping the API key
+        private wouldn't be possible.
 
         There's a web app wrapper around the NYC Planning Geoservice API called "GOAT",
         https://a030-goat.nyc.gov/goat. The GOAT app supports URL query parameters and is free
@@ -1146,7 +1146,7 @@ function processFootprint(footprintIndex, footprintBin, heightInMeters) {
     single-polygon footprints we'll use "add_way" because it has some advantages:
      - It only adds new nodes if neccessary, so JOSM will re-use any already loaded nodes at the
        same coordinates. This is convenient for connecting new footprints to previously-imported
-       abuting footprints. Rarely it might also result in the new footprint connecting to non-
+       abutting footprints. Rarely it might also result in the new footprint connecting to non-
        building nodes, which could be problematic, but on balance this is still desired behavior.
        (In theory we could achieve similar behavior from "load_data" with a preliminary OSM API
        "map?bbox" call, swapping in the IDs of any existing nodes at the same locations.  Possibly
@@ -1171,7 +1171,7 @@ function processFootprint(footprintIndex, footprintBin, heightInMeters) {
         let xmlRelationMembers = '';
         let role = 'outer';
         for (const polygon of footprint.the_geom.coordinates[0]) {
-            xmlRelationMembers += "  <member type='way' ref='" + elementCounter + "' role='" + role + "' />\r\n";
+            xmlRelationMembers += "    <member type='way' ref='" + elementCounter + "' role='" + role + "' />\r\n";
             footprint.nycaabs_osm_xml += "  <way id='" + elementCounter-- + "' action='modify' visible='true'>\r\n";
             footprint.nycaabs_osm_xml += xmlNodeListForPolygon(polygon, nodes);
             footprint.nycaabs_osm_xml += "  </way>\r\n";
